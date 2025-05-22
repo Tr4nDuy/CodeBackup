@@ -22,14 +22,11 @@ class Connectivity_features_basic:
 
     def get_protocol_type(self):
         return self.packet.p
-    
-    def get_header_len(self):
-        return self.packet.data.__hdr_len__ + len(self.packet.data.opts)
 
 class Connectivity_features_time:
     def __init__(self,packet):
         self.packet = packet
-    def time_to_live(self):
+    def duration(self):
         return self.packet.ttl
 
     def jitter(self):

@@ -53,8 +53,6 @@ def get_flow_info(flows, flow):
     duration = duration[-1] - duration[0]
     active_time = duration
 
-    #print('header length : ' , bytes) 
-
     return bytes,duration,max_duration,min_duration,sum_duration,average_duration,std_duration,idle_time,active_time
 
 def get_flag_values(tcp):
@@ -90,15 +88,15 @@ def compare_flow_flags(flag_valus,ack_count,syn_count,fin_count,urg_count,rst_co
     """
     comparing the flags to see how many times are they set
     """
-    if flag_valus[4] == 1:
+    if flag_valus[0] == 1:
         ack_count = ack_count + 1
     if flag_valus[1] == 1:
         syn_count = syn_count + 1
-    if flag_valus[0] == 1:
-        fin_count = fin_count + 1
-    if flag_valus[5] == 1:
-        urg_count = urg_count + 1
     if flag_valus[2] == 1:
+        fin_count = fin_count + 1
+    if flag_valus[3] == 1:
+        urg_count = urg_count + 1
+    if flag_valus[4] == 1:
         rst_count = rst_count + 1
 
     return ack_count,syn_count,fin_count,urg_count,rst_count
@@ -196,4 +194,3 @@ def calculate_packets_count_per_ports_proto(average_per_proto_src_port,average_p
 
     else:
         average_per_proto_dst_port[str((protocol_name, dst_port))] = 1
-

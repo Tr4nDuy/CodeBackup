@@ -13,7 +13,9 @@ if __name__ == '__main__':
     start = time.time()
     print("========== CIC IoT feature extraction ==========")
     
-    pcapfiles = [] #Place your pcap files here.
+    pcapfiles = [
+    
+]
     subfiles_size = 10 # MB
     split_directory = 'split_temp/'
     destination_directory = 'output/'
@@ -51,9 +53,7 @@ if __name__ == '__main__':
                 processes.append(p)
             for p in processes:
                 p.join()
-        print('The length of subfiles : ', len(subfiles))
-        print('The length of destination directory : ', len(os.listdir(destination_directory)))
-     #   assert len(subfiles)==len(os.listdir(destination_directory))
+        assert len(subfiles)==len(os.listdir(destination_directory))
         print(">>>> 3. Removing (sub) .pcap files.")
         for sf in subfiles:
             os.remove(split_directory + sf)
@@ -77,6 +77,4 @@ if __name__ == '__main__':
         
     end = time.time()
     print(f'Elapsed Time = {(end-start)}s')
-    
-    
     

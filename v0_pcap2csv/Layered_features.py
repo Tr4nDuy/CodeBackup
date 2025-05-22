@@ -94,10 +94,7 @@ class L2:
         self.dst_port = dst_port
 
     def dhcp(self):  # USED for UDP
-        if self.src_port == 67 and self.dst_port == 68:
-            return 1
-        
-        elif self.src_port == 68 and self.dst_port == 67:
+        if self.src_port == 67 or self.dst_port == 68:
             return 1
         else:
             return 0

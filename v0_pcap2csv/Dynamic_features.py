@@ -41,4 +41,3 @@ class Dynamic_features:
         weight = len(incoming) * len(outgoing)
 
         return magnite, radius, correlation, covaraince, var_ratio, weight
-
