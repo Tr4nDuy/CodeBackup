@@ -19,22 +19,30 @@ class Dynamic_features:
 
         return packets
 
-    def dynamic_two_streams(self,incoming, outgoing):
+    def dynamic_two_streams(self, incoming, outgoing):
+        if len(incoming) == 0:
+            inco_ave = inco_var = 0
+        else:
+            inco_ave = np.mean(incoming)
+            inco_var = np.var(incoming)
 
-        inco_ave = sum(incoming) / len(incoming)
-        outgoing_ave = sum(outgoing) / len(outgoing)
+        if len(outgoing) == 0:
+            outgoing_ave = outgo_var = 0
+        else:
+            outgoing_ave = np.mean(outgoing)
+            outgo_var = np.var(outgoing)
+
         magnite = (inco_ave + outgoing_ave) ** 0.5
 
-        inco_var = np.var(incoming)
-        outgo_var = np.var(outgoing)
         radius = (inco_var + outgo_var) ** 0.5
-        if len(incoming) and len(outgoing) >= 2:
+        if len(incoming)==len(outgoing) and len(outgoing) >= 2:
             correlation, p_value = stats.pearsonr(incoming, outgoing)
         else:
             correlation = 0
 
         covaraince = sum((a - inco_ave) * (b - outgoing_ave) for (a, b) in zip(incoming, outgoing)) / len(incoming)
         var_ratio = 0
+
         if outgo_var != 0:
             var_ratio = inco_var / outgo_var
 

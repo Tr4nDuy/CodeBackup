@@ -6,8 +6,11 @@ class Connectivity_features_basic:
         self.packet = packet
 
     def get_source_ip(self):
-        return ip_to_str(self.packet.src)
-
+        try:
+            return ip_to_str(self.packet.src)
+        except:
+            return None
+        
     def get_destination_ip(self):
         try:
             return ip_to_str(self.packet.dst)
@@ -15,10 +18,16 @@ class Connectivity_features_basic:
             return None
 
     def get_source_port(self):
-        return self.packet.data.sport
+        try:
+            return self.packet.data.sport
+        except:
+            return None
 
     def get_destination_port(self):
-        return self.packet.data.dport
+        try:
+            return self.packet.data.dport
+        except:
+            return None
 
     def get_protocol_type(self):
         return self.packet.p
@@ -57,6 +66,6 @@ class Connectivity_features_flags_bytes:
             dst_ip_byte[self.packet.dst] = 1
         else:
             dst_ip_byte[self.packet.dst] = dst_ip_byte[self.packet.dst] + 1
-
+            
 
         return src_ip_byte[self.packet.src], dst_ip_byte[self.packet.dst]
