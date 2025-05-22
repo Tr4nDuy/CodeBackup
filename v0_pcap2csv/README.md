@@ -54,7 +54,27 @@ Chứa các hàm hỗ trợ:
 - `get_flag_values()`: Lấy giá trị của các cờ TCP
 - `compare_flow_flags()`: So sánh các cờ TCP trong flow
 
+### 6. Generating_dataset.py
+
+File chính để xử lý tệp PCAP và tạo bộ dữ liệu CSV:
+
+- Tự động quét thư mục `pcap_files/` để tìm các tệp PCAP đầu vào
+- Chia tệp PCAP lớn thành các tệp nhỏ hơn (10MB mặc định) sử dụng tcpdump
+- Xử lý song song các tệp nhỏ bằng đa luồng (8 luồng mặc định)
+- Trích xuất đặc trưng từ mỗi tệp nhỏ và tạo các tệp CSV riêng biệt
+- Gộp các tệp CSV nhỏ thành một tệp CSV lớn với tên tương ứng với tệp PCAP đầu vào
+- Tự động xóa các tệp tạm để tiết kiệm không gian đĩa
+
+Cấu trúc thư mục cần thiết:
+
+- `pcap_files/`: Thư mục chứa các tệp PCAP đầu vào
+- `split_temp/`: Thư mục tạm để lưu các tệp PCAP đã chia nhỏ
+- `output/`: Thư mục tạm chứa các tệp CSV trích xuất đặc trưng từ các tệp PCAP nhỏ
+- `csv_files/`: Thư mục chứa các tệp CSV đã gộp, mỗi tệp tương ứng với một tệp PCAP đầu vào
+
 ## Cách sử dụng
+
+### Sử dụng Feature_extraction trực tiếp
 
 ```python
 from Feature_extraction import Feature_extraction
@@ -65,6 +85,30 @@ fe = Feature_extraction()
 # Phân tích tệp PCAP và tạo tệp CSV
 fe.pcap_evaluation("input.pcap", "output")
 ```
+
+### Sử dụng Generating_dataset để xử lý hàng loạt
+
+1. Tạo các thư mục cần thiết (nếu chưa tồn tại):
+
+   ```bash
+   mkdir -p pcap_files split_temp output csv_files
+   ```
+
+2. Đặt các tệp PCAP vào thư mục `pcap_files/`
+
+3. Chạy script Generating_dataset.py:
+
+   ```bash
+   python Generating_dataset.py
+   ```
+
+4. Quá trình xử lý sẽ tự động diễn ra:
+   - Chia tệp PCAP thành các phần nhỏ hơn (10MB mỗi phần)
+   - Xử lý từng phần nhỏ sử dụng 8 luồng xử lý song song
+   - Gộp kết quả thành một tệp CSV duy nhất
+
+5. Các tệp CSV kết quả sẽ được lưu trong thư mục `csv_files/` với tên mặc định dựa trên tên tệp PCAP
+   (ví dụ: `traffic.pcap` sẽ tạo ra `traffic.csv`)
 
 ## Xử lý ngoại lệ
 
@@ -80,3 +124,4 @@ Thư viện xử lý nhiều loại ngoại lệ để đảm bảo không bị 
 - Xử lý từng batch gói tin để tối ưu bộ nhớ
 - Giải phóng bộ nhớ sau mỗi batch để tránh tràn bộ nhớ
 - Ghi log tiến trình sau mỗi 10,000 gói tin
+- Xử lý song song các tệp PCAP với đa luồng để tăng tốc độ xử lý

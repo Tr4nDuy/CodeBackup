@@ -42,6 +42,12 @@
     - Đã tạo file README.md với hướng dẫn đầy đủ
     - Thêm docstring và chú thích cho code
 
+11. **Cải thiện xử lý file trong Generating_dataset.py**:
+    - Đọc các tệp PCAP từ thư mục `pcap_files/` thay vì danh sách cố định
+    - Sử dụng `os.path.join()` để tạo đường dẫn chính xác
+    - Lưu file CSV vào thư mục `csv_files/` với tên tương ứng
+    - Tạo cấu trúc thư mục rõ ràng hơn
+
 ## Lợi ích từ các cải tiến
 
 1. **Tăng tính ổn định**:
@@ -51,10 +57,12 @@
 2. **Cải thiện hiệu suất**:
    - Tối ưu bộ nhớ
    - Xử lý batch cho các tệp lớn
+   - Tự động quét thư mục pcap_files và xử lý tất cả các tệp PCAP
 
 3. **Dễ bảo trì hơn**:
    - Mã nguồn rõ ràng, có comment đầy đủ
    - Chia nhỏ thành các phương thức có chức năng rõ ràng
+   - Cải thiện quản lý đường dẫn file với os.path.join
 
 4. **Chính xác hơn trong phân tích**:
    - Sửa lỗi logic trong việc nhận diện giao thức
