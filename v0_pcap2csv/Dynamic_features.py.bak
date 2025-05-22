@@ -1,37 +1,22 @@
-# filepath: c:\Users\ADMIN\Desktop\CodeBackup\v0_pcap2csv\Dynamic_features.py
 import numpy as np
 import itertools
 from scipy import stats
 
 class Dynamic_features:
-    def dynamic_calculation(self, ethsize):
-        """
-        Tính toán các đặc trưng thống kê cơ bản từ danh sách kích thước frame
-        
-        :param ethsize: Danh sách kích thước các frame Ethernet
-        :return: sum, min, max, mean, std
-        """
+    def dynamic_calculation(self,ethsize):
         sum_packets = sum(ethsize)
         min_packets = min(ethsize)
         max_packets = max(ethsize)
         mean_packets = sum_packets / len(ethsize)
         std_packets = np.std(ethsize)
 
-        return sum_packets, min_packets, max_packets, mean_packets, std_packets
-
-    def dynamic_count(self, protcols_count):
-        """
-        Tính tổng số gói tin theo protocol
-        
-        :param protcols_count: Dictionary đếm số lượng gói tin theo protocol
-        :return: Tổng số gói tin
-        """
+        return sum_packets,min_packets,max_packets,mean_packets,std_packets    def dynamic_count(self,protcols_count):   #calculates the Number feature
         packets = 0
         for k in protcols_count.keys():
             packets = packets + protcols_count[k]
 
         return packets
-
+        
     def dynamic_two_streams(self, incoming, outgoing):
         """
         Tính toán các đặc trưng dựa trên hai luồng gói tin (vào/ra)

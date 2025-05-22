@@ -35,8 +35,20 @@ class Connectivity_features_basic:
 class Connectivity_features_time:
     def __init__(self,packet):
         self.packet = packet
-    def duration(self):
+    def ttl(self):
+        """
+        Return the Time-to-Live (TTL) value of the packet. 
+        This is not related to duration but rather to the hop limit of the packet.
+        """
         return self.packet.ttl
+        
+    def duration(self):
+        """
+        Deprecated: This function misleadingly returns TTL value, not actual duration.
+        Use ttl() instead for correctness.
+        """
+        # For backward compatibility
+        return self.ttl()
 
     def jitter(self):
         pass

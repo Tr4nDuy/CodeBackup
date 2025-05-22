@@ -34,26 +34,46 @@ def get_protocol_name(protocol_val):
 
 def get_flow_info(flows, flow):
     """
-    generating flow features
+    Tính toán các đặc trưng của luồng từ danh sách gói tin
+    
+    :param flows: Dictionary chứa các luồng gói tin 
+    :param flow: Khóa của luồng cần tính toán
+    :return: bytes, duration, max_duration, min_duration, sum_duration, average_duration, std_duration, idle_time, active_time
     """
+    try:
+        # Đảm bảo luồng tồn tại
+        if flow not in flows or not flows[flow]:
+            return 0, 0, 0, 0, 0, 0, 0, 0, 0
 
-    bytes = reduce(lambda x, y: x+y,
-                   map(lambda e: e['byte_count'], flows[flow]))
-    duration = sorted(map(lambda e: e['ts'], flows[flow]))
-    if len(duration)>1:
-        idle_time = duration[len(duration)-1] - duration[len(duration) - 2]
-    else:
-        idle_time = duration[len(duration)-1]
-
-    max_duration = max(duration)
-    min_duration = min(duration)
-    sum_duration = sum(duration)
-    average_duration = sum(duration) / len(duration)
-    std_duration = np.std(duration)
-    duration = duration[-1] - duration[0]
-    active_time = duration
-
-    return bytes,duration,max_duration,min_duration,sum_duration,average_duration,std_duration,idle_time,active_time
+        # Tính tổng bytes
+        bytes = reduce(lambda x, y: x+y,
+                    map(lambda e: e['byte_count'], flows[flow]))
+        
+        # Lấy danh sách timestamp và sắp xếp
+        duration = sorted(map(lambda e: e['ts'], flows[flow]))
+        
+        # Tính idle_time
+        if len(duration) > 1:
+            idle_time = duration[len(duration)-1] - duration[len(duration) - 2]
+        else:
+            idle_time = 0
+        
+        # Tính các đặc trưng thống kê
+        max_duration = max(duration)
+        min_duration = min(duration)
+        sum_duration = sum(duration)
+        average_duration = sum(duration) / len(duration)
+        std_duration = np.std(duration)
+        
+        # Tính duration và active_time
+        duration_value = duration[-1] - duration[0] if len(duration) > 1 else 0
+        active_time = duration_value
+        
+        return bytes, duration_value, max_duration, min_duration, sum_duration, average_duration, std_duration, idle_time, active_time
+    except Exception as e:
+        # Xử lý ngoại lệ và trả về giá trị mặc định
+        print(f"Error in get_flow_info: {e}")
+        return 0, 0, 0, 0, 0, 0, 0, 0, 0
 
 def get_flag_values(tcp):
     """
@@ -86,17 +106,26 @@ def get_flag_values(tcp):
 
 def compare_flow_flags(flag_valus,ack_count,syn_count,fin_count,urg_count,rst_count):
     """
-    comparing the flags to see how many times are they set
+    Cập nhật số lượng các cờ TCP được thiết lập trong luồng
+    
+    :param flag_valus: Mảng 8 phần tử chứa giá trị của 8 cờ TCP
+                     [FIN, SYN, RST, PSH, ACK, URG, ECE, CWR]
+    :param ack_count: Số lượng cờ ACK đã gặp
+    :param syn_count: Số lượng cờ SYN đã gặp
+    :param fin_count: Số lượng cờ FIN đã gặp
+    :param urg_count: Số lượng cờ URG đã gặp
+    :param rst_count: Số lượng cờ RST đã gặp
+    :return: Số lượng cờ sau khi cập nhật
     """
-    if flag_valus[0] == 1:
+    if flag_valus[4] == 1:  # ACK flag
         ack_count = ack_count + 1
-    if flag_valus[1] == 1:
+    if flag_valus[1] == 1:  # SYN flag
         syn_count = syn_count + 1
-    if flag_valus[2] == 1:
+    if flag_valus[0] == 1:  # FIN flag
         fin_count = fin_count + 1
-    if flag_valus[3] == 1:
+    if flag_valus[5] == 1:  # URG flag
         urg_count = urg_count + 1
-    if flag_valus[4] == 1:
+    if flag_valus[2] == 1:  # RST flag
         rst_count = rst_count + 1
 
     return ack_count,syn_count,fin_count,urg_count,rst_count

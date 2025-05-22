@@ -94,7 +94,14 @@ class L2:
         self.dst_port = dst_port
 
     def dhcp(self):  # USED for UDP
-        if self.src_port == 67 or self.dst_port == 68:
+        """
+        Kiểm tra xem gói tin có phải là DHCP hay không.
+        DHCP sử dụng port 67 (server) và port 68 (client).
+        Một gói tin DHCP hợp lệ có thể là:
+        - Server (67) đến Client (68): Server gửi thông tin đến client
+        - Client (68) đến Server (67): Client gửi request đến server
+        """
+        if (self.src_port == 67 and self.dst_port == 68) or (self.src_port == 68 and self.dst_port == 67):
             return 1
         else:
             return 0
