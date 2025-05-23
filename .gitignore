@@ -1,0 +1,10 @@
+# Bỏ qua thư mục cache Python
+__pycache__/
+
+# Bỏ qua các file dữ liệu
+*.pcap
+*.csv
+
+# Bỏ qua các thư mục output tạm thời
+output/
+split_temp/
