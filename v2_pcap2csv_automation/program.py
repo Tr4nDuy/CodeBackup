@@ -6,60 +6,53 @@ import joblib
 import time
 import logging
 import argparse
-
-from sklearn.model_selection import train_test_split
-from sklearn.neighbors import LocalOutlierFactor
-from sklearn.preprocessing import (
-    StandardScaler,
-    QuantileTransformer,
-    MinMaxScaler,
-    Normalizer,
-    RobustScaler,
-    LabelEncoder,
-)
-from sklearn.metrics import *
-import warnings
+from sklearn.metrics import matthews_corrcoef
+from sklearn.preprocessing import LabelEncoder
+from sklearn.metrics.pairwise import pairwise_kernels
 from tqdm import tqdm
+import warnings
 
 warnings.filterwarnings("ignore", category=UserWarning, module="sklearn")
 
-np.random.seed(0)
+# Set global configurations
+np.random.seed(42)
 pd.set_option("display.max_columns", None)
 
-drop_cls = ["*"]
 __MODE = "Supervise"
 __SEED = 42
 __SCALER = "QuantileTransformer"
 
-def kernel_distance_matrix(matrix1=None, matrix2=None, kernel=None, gamma=None):
+def K(X, Y=None, metric="poly", coef0=1, gamma=None, degree=3):
+    """Compute kernel matrix between X and Y."""
+    params = {}
+    if metric == "poly":
+        params = {"coef0": coef0, "gamma": gamma, "degree": degree}
+    elif metric == "sigmoid":
+        params = {"coef0": coef0, "gamma": gamma}
+    elif metric == "rbf":
+        params = {"gamma": gamma}
+    
+    return pairwise_kernels(X, Y=Y, metric=metric, **params)
+
+def kernel_distance_matrix(matrix1, matrix2, kernel="linear", gamma=None):
     """
     Calculate distance matrix between two matrices using specified kernel.
-    
-    Parameters:
-    - matrix1: First matrix
-    - matrix2: Second matrix
-    - kernel: Kernel type ('linear', 'rbf', etc.)
-    - gamma: Parameter for RBF kernel
-    
-    Returns:
-    - Distance matrix
     """
-    if kernel == "linear":
-        return np.dot(matrix1, matrix2.T)
-    elif kernel == "rbf":
-        if gamma is None:
-            gamma = 1.0 / matrix1.shape[1]
-        K = np.zeros((matrix1.shape[0], matrix2.shape[0]))
-        for i in range(matrix1.shape[0]):
-            for j in range(matrix2.shape[0]):
-                K[i, j] = np.exp(-gamma * np.sum((matrix1[i] - matrix2[j]) ** 2))
-        return K
-    else:  # default to Euclidean distance
-        m = matrix1.shape[0]
-        n = matrix2.shape[0]
-        mat1 = np.repeat(np.sum(np.power(matrix1, 2), axis=1, keepdims=True), n, axis=1)
-        mat2 = np.repeat(np.sum(np.power(matrix2, 2), axis=1, keepdims=True), m, axis=1)
-        return np.sqrt(mat1 + mat2.T - 2 * np.dot(matrix1, matrix2.T))
+    if matrix1.shape[1] != matrix2.shape[1]:
+        raise ValueError("The number of features in the input matrices must be the same.")
+    
+    # Calculate diagonal elements of kernel matrices (K(x_i, x_i) for all i)
+    Kaa = np.array([K(x.reshape(1, -1), metric=kernel) for x in matrix1]).flatten()
+    Kbb = np.array([K(x.reshape(1, -1), metric=kernel) for x in matrix2]).flatten()
+    
+    # Calculate cross terms K(x_i, y_j) for all i,j
+    Kab = K(matrix1, matrix2, metric=kernel)
+    
+    # Compute kernel distance: K(x,x) - 2*K(x,y) + K(y,y)
+    # Broadcasting to compute distances between all pairs
+    d = Kaa.reshape(-1, 1) - 2 * Kab + Kbb
+    
+    return d
 
 def calculate_accuracy_for_label(y_true, y_predict, label):
     """
@@ -73,10 +66,12 @@ def calculate_accuracy_for_label(y_true, y_predict, label):
     Returns:
     - Accuracy for the specified label
     """
-    mask = (y_true == label)
+    mask = y_true == label
     if not np.any(mask):
         return 0.0
-    return np.mean(y_predict[mask] == y_true[mask])
+    
+    return np.mean(y_true[mask] == y_predict[mask])
+
 
 class kINN:
     def __init__(self, R=1, kernel="linear", mode="Supervise"):
@@ -295,6 +290,35 @@ class kINN:
                     
         self.cluster_map = cluster_map
         
+    # def _fit_cluster(self,X):
+    #     N = X.shape[0]
+    #     dis_mat = kernel_distance_matrix(matrix1 = X, matrix2 = X, kernel = self.kernel)
+    #     D_NN = []
+    #     for i in range(N):
+    #         dis_mat[i,i] = 0
+    #         tmp = dis_mat[i,].argsort()
+    #         D_NN.append(tmp)
+
+    #     D_NN = np.array(D_NN)
+    #     self.D_NN = D_NN
+    #     INNR = []
+
+    #     for i in range(N):
+    #         NN = D_NN[i, 1:self.R+1]
+
+    #     tmp = []
+    #     for p in NN:
+    #         p_near_neighbor = D_NN[p, 1:self.R+1]
+    #         if i in p_near_neighbor:
+    #             tmp.append(p)
+
+    #     pair = (i, tmp)
+    #     INNR.append(pair)
+    # self.INNR = INNR
+
+    # self.N = N
+    # self.cluster_labels, self.no_cluser = self._label_clusters()
+
     def _label_clusters(self):
         """
         Label clusters using deep find search (DFS) algorithm.
@@ -407,7 +431,9 @@ class kINN:
             NN = D_NN_test[i, 1:self.R+1]
             tmp = []
             for p in NN:
-                if hasattr(self, 'D_NN') and self.D_NN is not None:
+                # Kiểm tra p có hợp lệ và D_NN có tồn tại không
+                if (hasattr(self, 'D_NN') and self.D_NN is not None and 
+                    p < len(self.D_NN) and self.D_NN[p] is not None):
                     p_near_neighbor = self.D_NN[p]
                     if i in p_near_neighbor:
                         tmp.append(p)
@@ -464,87 +490,186 @@ class kINN:
 
 
 def main():
-    # Tạo parser để đọc argument từ command line
-    parser = argparse.ArgumentParser(description="Read CSV file from argument")
-    parser.add_argument("csv_file", type=str, help="Path to CSV file")
+    try:
+        # Tạo parser để đọc argument từ command line
+        parser = argparse.ArgumentParser(description="Read CSV file from argument")
+        parser.add_argument("csv_file", type=str, help="Path to CSV file")
 
-    # Lấy argument từ command line
-    args = parser.parse_args()
-    csv_file_path = args.csv_file
+        # Lấy argument từ command line
+        args = parser.parse_args()
+        csv_file_path = args.csv_file
+        
+        # Kiểm tra file CSV tồn tại
+        if not os.path.isfile(csv_file_path):
+            raise FileNotFoundError(f"File CSV không tồn tại: {csv_file_path}")
+        
+        # Load model và các thành phần từ file
+        model_path = os.path.join(os.path.dirname(__file__), "..", "Saved model", "kinn_model.pkl")
+        if not os.path.isfile(model_path):
+            raise FileNotFoundError(f"File model không tồn tại: {model_path}")
+            
+        try:
+            with open(model_path, "rb") as f:
+                saved_data = pickle.load(f)
+
+            # Truy xuất các thành phần
+            kinn_model_loaded = saved_data["model"]
+            cluster_train = saved_data["cluster_train"]
+            cluster_map = saved_data["cluster_map"]
+            parameters = saved_data["parameters"]
+        except (KeyError, pickle.UnpicklingError) as e:
+            raise ValueError(f"File model không hợp lệ: {e}")
+
+        # Đọc dữ liệu
+        try:
+            df = pd.read_csv(csv_file_path)
+            df = df.fillna(0)
+        except pd.errors.EmptyDataError:
+            raise ValueError("File CSV rỗng")
+        except pd.errors.ParserError:
+            raise ValueError("Định dạng file CSV không hợp lệ")
+
+        selected_columns = [
+            "flow_duration", "flow_byte", "src_port", "dst_port", "Duration", "Rate",
+            "Srate", "Drate", "fin_flag_number", "syn_flag_number", "rst_flag_number",
+            "psh_flag_number", "ack_flag_number", "urg_flag_number", "ece_flag_number",
+            "cwr_flag_number", "ack_count", "syn_count", "fin_count", "urg_count",
+            "rst_count", "CoAP", "HTTP", "HTTPS", "DNS", "Telnet", "SMTP", "SSH", "IRC",
+            "TCP", "UDP", "DHCP", "ARP", "ICMP", "IGMP", "IPv", "LLC", "Tot sum", "Min",
+            "Max", "AVG", "Std", "Tot size", "IAT", "Magnitue", "Radius", "Covariance",
+            "Variance", "Weight", "DS status", "Fragments", "Sequence number",
+            "flow_idle_time", "flow_active_time"
+        ]
+        log_columns = [
+            "src_ip", "dst_ip"
+        ]
+        
+        # Kiểm tra các cột cần thiết tồn tại trong DataFrame
+        missing_cols = [col for col in selected_columns if col not in df.columns]
+        if missing_cols:
+            raise ValueError(f"File CSV thiếu các cột: {', '.join(missing_cols)}")
+            
+        missing_log_cols = [col for col in log_columns if col not in df.columns]
+        if missing_log_cols:
+            raise ValueError(f"File CSV thiếu các cột log: {', '.join(missing_log_cols)}")
+        
+        # Tạo DataFrame mới chỉ chứa các cột đã chọn
+        df_new = df[selected_columns]
+        df_log = df[log_columns]
+        df_new.insert(0, "", range(1, len(df_new) + 1))
+
+        # Load the saved scaler from the 'scaler.pkl' file
+        scaler_path = os.path.join(os.path.dirname(__file__), "..", "Saved model", "scaler.pkl")
+        if not os.path.isfile(scaler_path):
+            raise FileNotFoundError(f"File scaler không tồn tại: {scaler_path}")
+            
+        try:
+            scaler = joblib.load(scaler_path)
+        except Exception as e:
+            raise ValueError(f"Không thể load file scaler: {e}")
+
+        # Chuẩn hóa dữ liệu
+        try:
+            X_transformed = scaler.transform(df_new.values)
+        except Exception as e:
+            raise ValueError(f"Lỗi khi chuẩn hóa dữ liệu: {e}")
+
+        # Dự đoán với mô hình
+        try:
+            y_pred = kinn_model_loaded.predict(X_transformed)
+            print(f"Đã dự đoán xong {len(y_pred)} gói tin")
+        except Exception as e:
+            raise ValueError(f"Lỗi khi dự đoán: {e}")
+
+        encoder_path = os.path.join(os.path.dirname(__file__), "..", "Saved model", "label_encoder.pkl")
+        if not os.path.isfile(encoder_path):
+            raise FileNotFoundError(f"File encoder không tồn tại: {encoder_path}")
+            
+        try:
+            encoder = joblib.load(encoder_path)  # Load encoder đã lưu
+            y_pred_labels = encoder.inverse_transform(y_pred)
+        except Exception as e:
+            raise ValueError(f"Không thể load file encoder hoặc chuyển đổi nhãn: {e}")
+
+        # Tạo thư mục logs nếu chưa tồn tại
+        logs_dir = os.path.join(os.path.dirname(__file__), "logs")
+        os.makedirs(logs_dir, exist_ok=True)
+        log_file_path = os.path.join(logs_dir, "event_log.log")
+        
+        # Thiết lập cấu hình cho logger
+        logging.basicConfig(
+            filename=log_file_path,  # Tên file log
+            level=logging.INFO,        # Mức độ ghi log (INFO, DEBUG, ERROR, v.v.)
+            format='%(asctime)s - %(message)s',  # Định dạng ghi log
+            datefmt='%Y-%m-%d %H:%M:%S',  # Định dạng ngày giờ
+            force=True  # Ghi đè cấu hình logger nếu đã tồn tại
+        )
+
+        # Tạo ánh xạ giữa nhãn và mô tả sự kiện
+        log_mapping = {
+            "0_normal": "Normal Traffic",
+            "TCP": "TCP Scanning Attack",
+            "UDP": "UDP Scanning Attack",
+            "ICMP": "ICMP Scanning Attack", 
+            "ARP": "ARP Scanning Attack"
+        }
+
+        # Thông báo bắt đầu xử lý
+        print(f"\n{'=' * 50}")
+        print(f"Bắt đầu phân tích {len(y_pred)} gói tin...")
+        print(f"{'=' * 50}\n")
+
+        # Số lượng từng loại sự kiện
+        event_counts = {event_type: 0 for event_type in log_mapping.values()}
+        event_counts["Unknown"] = 0
+
+        for i, label in enumerate(y_pred_labels, 1):
+            # Lấy thông tin gói tin
+            timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+            
+            # Sử dụng try-except để tránh lỗi nếu index vượt quá
+            try:
+                src_ip = df_log.iloc[i-1]["src_ip"]
+                dst_ip = df_log.iloc[i-1]["dst_ip"]
+                src_port = df.iloc[i-1]["src_port"]
+                dst_port = df.iloc[i-1]["dst_port"]
+            except IndexError:
+                src_ip = "N/A"
+                dst_ip = "N/A"
+                src_port = "N/A"
+                dst_port = "N/A"
+            
+            # Chuyển nhãn thành mô tả sự kiện
+            event = log_mapping.get(label, "Unknown event")
+            
+            # Cập nhật số lượng sự kiện
+            if event == "Unknown event":
+                event_counts["Unknown"] += 1
+            else:
+                event_counts[event] += 1
+            
+            # Format log chuẩn hơn (bỏ dấu phẩy thừa)
+            log_message = f"Log {i}: Event='{event}', Src IP='{src_ip}', Src Port='{src_port}', Dst IP='{dst_ip}', Dst Port='{dst_port}', Label='{label}'"
+            
+            # In log ra console và ghi vào file
+            print(f"{timestamp} - {log_message}")
+            logging.info(log_message)
+
+        # Hiển thị thống kê
+        print(f"\n{'=' * 50}")
+        print("Thống kê các sự kiện phát hiện được:")
+        for event_type, count in event_counts.items():
+            if count > 0:
+                print(f"- {event_type}: {count} gói tin")
+        print(f"{'=' * 50}")
+
+    except Exception as e:
+        error_message = f"Lỗi: {str(e)}"
+        print(error_message)
+        logging.error(error_message)
+        return 1
     
-    # Load model và các thành phần từ file
-    model_path = os.path.join(os.path.dirname(__file__), "..", "Saved model", "kinn_model.pkl")
-    with open(model_path, "rb") as f:
-        saved_data = pickle.load(f)
-
-    # Truy xuất các thành phần
-    kinn_model_loaded = saved_data["model"]
-    cluster_train = saved_data["cluster_train"]
-    cluster_map = saved_data["cluster_map"]
-    parameters = saved_data["parameters"]
-
-    # Đọc dữ liệu
-    df = pd.read_csv(csv_file_path)
-    df = df.fillna(0)
-
-    selected_columns = [
-        "flow_duration", "flow_byte", "src_port", "dst_port", "Duration", "Rate",
-        "Srate", "Drate", "fin_flag_number", "syn_flag_number", "rst_flag_number",
-        "psh_flag_number", "ack_flag_number", "urg_flag_number", "ece_flag_number",
-        "cwr_flag_number", "ack_count", "syn_count", "fin_count", "urg_count",
-        "rst_count", "CoAP", "HTTP", "HTTPS", "DNS", "Telnet", "SMTP", "SSH", "IRC",
-        "TCP", "UDP", "DHCP", "ARP", "ICMP", "IGMP", "IPv", "LLC", "Tot sum", "Min",
-        "Max", "AVG", "Std", "Tot size", "IAT", "Magnitue", "Radius", "Covariance",
-        "Variance", "Weight", "DS status", "Fragments", "Sequence number",
-        "flow_idle_time", "flow_active_time"
-    ]
-    log_columns = [
-        "src_ip", "dst_ip"
-    ]
-    
-    # Tạo DataFrame mới chỉ chứa các cột đã chọn
-    df_new = df[selected_columns]
-    df_log = df[log_columns]
-    df_new.insert(0, "", range(1, len(df_new) + 1))
-
-    # Load the saved scaler from the 'scaler.pkl' file
-    scaler_path = os.path.join(os.path.dirname(__file__), "..", "Saved model", "scaler.pkl")
-    scaler = joblib.load(scaler_path)
-
-    # Chuẩn hóa dữ liệu
-    X_transformed = scaler.transform(df_new.values)
-
-    # Gộp lại thành một mảng numpy
-    y_pred = kinn_model_loaded.predict(X_transformed)
-    print(y_pred)
-
-    encoder_path = os.path.join(os.path.dirname(__file__), "..", "Saved model", "label_encoder.pkl")
-    encoder = joblib.load(encoder_path)  # Load encoder đã lưu
-    y_pred_labels = encoder.inverse_transform(y_pred)
-
-    # Thiết lập cấu hình cho logger
-    logging.basicConfig(
-        filename='event_log.log',  # Tên file log
-        level=logging.INFO,        # Mức độ ghi log (INFO, DEBUG, ERROR, v.v.)
-        format='%(asctime)s - %(message)s',  # Định dạng ghi log
-        datefmt='%Y-%m-%d %H:%M:%S'  # Định dạng ngày giờ
-    )
-
-    # Tạo ánh xạ giữa nhãn và mô tả sự kiện
-    log_mapping = {
-        "0_normal": "Normal",
-        "TCP": "Scanning attack"
-    }
-
-    for i, label in enumerate(y_pred_labels, 1):
-        timestamp = time.strftime("%Y-%m-%d %H:%M:%S")  # Lấy thời gian hiện tại
-        src_ip = df_log.iloc[i-1]["src_ip"]
-        dst_ip = df_log.iloc[i-1]["dst_ip"]
-        src_port = df.iloc[i-1]["src_port"]
-        dst_port = df.iloc[i-1]["dst_port"]
-        event = log_mapping.get(label, "Unknown event")  # Chuyển nhãn thành mô tả
-        print(f"{timestamp} Log {i}: , Event='{event}', Src IP='{src_ip}',  Src Port='{src_port}', Dst IP='{dst_ip}', Dst Port='{dst_port}', Label='{label}'")
-        logging.info(f"{timestamp} Log {i}: , Event='{event}', Src IP='{src_ip}',  Src Port='{src_port}', Dst IP='{dst_ip}', Dst Port='{dst_port}', Label='{label}'")
+    return 0
 
 
 if __name__ == "__main__":
