@@ -12,7 +12,7 @@ param(
 $ErrorActionPreference = "Stop"
 
 # Đường dẫn cấu hình
-$ELK_BASE = "E:\ELK"
+$ELK_BASE = "C:\ELK"
 $NIDS_BASE = "C:\Users\ADMIN\Desktop\CodeBackup\v2_pcap2csv_automation"
 $SIEM_CONFIG = "C:\Users\ADMIN\Desktop\CodeBackup\siem_setup"
 

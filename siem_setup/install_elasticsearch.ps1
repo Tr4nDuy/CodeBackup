@@ -2,7 +2,7 @@
 Write-Host "Đang cài đặt Elasticsearch..." -ForegroundColor Green
 
 # Tạo thư mục ELK
-$elkDir = "E:\ELK"
+$elkDir = "C:\ELK"
 New-Item -ItemType Directory -Force -Path $elkDir
 
 # Download Elasticsearch
@@ -25,5 +25,5 @@ if (Test-Path $esDir) {
 
 Write-Host "Elasticsearch đã được cài đặt tại: $elkDir\elasticsearch" -ForegroundColor Green
 Write-Host "Để chạy Elasticsearch, mở PowerShell với quyền Admin và chạy:" -ForegroundColor Cyan
-Write-Host "cd E:\ELK\elasticsearch\bin" -ForegroundColor White
+Write-Host "cd C:\ELK\elasticsearch\bin" -ForegroundColor White
 Write-Host ".\elasticsearch.bat" -ForegroundColor White

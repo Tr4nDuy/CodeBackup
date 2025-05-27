@@ -26,51 +26,70 @@ def K(X, Y=None, metric="poly", coef0=1, gamma=None, degree=3):
     """Compute kernel matrix between X and Y."""
     params = {}
     if metric == "poly":
-        params = {"coef0": coef0, "gamma": gamma, "degree": degree}
+        k = pairwise_kernels(
+            X, Y=Y, metric=metric, coef0=coef0, gamma=gamma, degree=degree
+        )
+    elif metric == "linear":
+        k = pairwise_kernels(X, Y=Y, metric=metric)
     elif metric == "sigmoid":
-        params = {"coef0": coef0, "gamma": gamma}
+        k = pairwise_kernels(X, Y=Y, metric=metric, coef0=coef0, gamma=gamma)
     elif metric == "rbf":
-        params = {"gamma": gamma}
-    
-    return pairwise_kernels(X, Y=Y, metric=metric, **params)
+        k = pairwise_kernels(X, Y=Y, metric=metric, gamma=gamma)
+    return k
 
-def kernel_distance_matrix(matrix1, matrix2, kernel="linear", gamma=None):
+
+def kernel_distance_matrix(matrix1=None, matrix2=None, kernel=None, gamma=None):
     """
-    Calculate distance matrix between two matrices using specified kernel.
+    Calculate the distance between two matrices using the kernel trick.
+    Parameters:
+    - matrix1: The first input matrix (NumPy array).
+    - matrix2: The second input matrix (NumPy array).
+    - gamma: The gamma parameter for the RBF kernel.
+    Returns:
+    - distance_matrix: The distance matrix between the two input matrices.
     """
+
     if matrix1.shape[1] != matrix2.shape[1]:
-        raise ValueError("The number of features in the input matrices must be the same.")
-    
-    # Calculate diagonal elements of kernel matrices (K(x_i, x_i) for all i)
-    Kaa = np.array([K(x.reshape(1, -1), metric=kernel) for x in matrix1]).flatten()
-    Kbb = np.array([K(x.reshape(1, -1), metric=kernel) for x in matrix2]).flatten()
-    
-    # Calculate cross terms K(x_i, y_j) for all i,j
+        raise ValueError(
+            "The number of features in the input matrices must be the same."
+        )
+    Kaa = []
+    for i in range(len(matrix1)):
+        Kaa.append(K(matrix1[i, :].reshape(1, -1), metric=kernel))
+    Kaa = np.asarray(Kaa).ravel().reshape(len(Kaa), 1)
     Kab = K(matrix1, matrix2, metric=kernel)
-    
-    # Compute kernel distance: K(x,x) - 2*K(x,y) + K(y,y)
-    # Broadcasting to compute distances between all pairs
-    d = Kaa.reshape(-1, 1) - 2 * Kab + Kbb
-    
+    Kbb = []
+    for i in range(len(matrix2)):
+        Kbb.append(K(matrix2[i, :].reshape(1, -1), metric=kernel))
+    Kbb = np.asarray(Kbb).ravel()
+    d = Kaa - 2 * Kab + Kbb  # shape: (matrix1,matrix2)
     return d
+
 
 def calculate_accuracy_for_label(y_true, y_predict, label):
     """
     Calculate accuracy for a specific label.
-    
+
     Parameters:
-    - y_true: True labels
-    - y_predict: Predicted labels
-    - label: Target label
-    
+    - y_true: The true labels (1D NumPy array).
+    - y_predict: The predicted labels (1D NumPy array).
+    - label: The specific label for which to calculate accuracy.
+
     Returns:
-    - Accuracy for the specified label
+    - accuracy: The accuracy for the specified label.
     """
+    # Create a boolean mask for the specified label
     mask = y_true == label
-    if not np.any(mask):
-        return 0.0
-    
-    return np.mean(y_true[mask] == y_predict[mask])
+
+    # Extract true labels and predicted labels for the specified label
+    true_labels_for_label = y_true[mask]
+    predicted_labels_for_label = y_predict[mask]
+
+    # Calculate accuracy for the specified label
+    accuracy = np.mean(true_labels_for_label == predicted_labels_for_label)
+    # print(accuracy)
+    return accuracy
+
 
 
 class kINN:

@@ -4,7 +4,7 @@
 Write-Host "=== Cài đặt Kibana ===" -ForegroundColor Green
 
 # Tạo thư mục làm việc
-$workDir = "E:\ELK\kibana"
+$workDir = "C:\ELK\kibana"
 if (!(Test-Path $workDir)) {
     New-Item -ItemType Directory -Path $workDir -Force
 }

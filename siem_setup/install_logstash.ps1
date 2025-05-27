@@ -4,7 +4,7 @@
 Write-Host "=== Cài đặt Logstash ===" -ForegroundColor Green
 
 # Tạo thư mục làm việc
-$workDir = "E:\ELK\logstash"
+$workDir = "C:\ELK\logstash"
 if (!(Test-Path $workDir)) {
     New-Item -ItemType Directory -Path $workDir -Force
 }
