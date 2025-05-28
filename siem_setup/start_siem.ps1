@@ -1,4 +1,4 @@
-# Script khởi động tổng thể cho NIDS-SIEM
+﻿# Script khởi động tổng thể cho NIDS-SIEM
 # Chạy với quyền Administrator
 
 param(
@@ -13,8 +13,8 @@ $ErrorActionPreference = "Stop"
 
 # Đường dẫn cấu hình
 $ELK_BASE = "C:\ELK"
-$NIDS_BASE = "C:\Users\ADMIN\Desktop\CodeBackup\v2_pcap2csv_automation"
-$SIEM_CONFIG = "C:\Users\ADMIN\Desktop\CodeBackup\siem_setup"
+$NIDS_BASE = "C:\Users\administrator.DUY\Documents\NIDS-SIEM\Code"
+$SIEM_CONFIG = "C:\Users\administrator.DUY\Documents\NIDS-SIEM\siem_setup"
 
 function Write-ColorOutput($Message, $Color = "White") {
     Write-Host $Message -ForegroundColor $Color
@@ -60,7 +60,14 @@ function Start-ELKServices {
         # Start Elasticsearch
         if (!(Test-ServiceRunning "java")) {
             Write-ColorOutput "Starting Elasticsearch..." "Yellow"
-            Start-Process -FilePath "$ELK_BASE\elasticsearch\elasticsearch\bin\elasticsearch.bat" -WindowStyle Minimized
+            
+            # Tìm đúng thư mục cài đặt Elasticsearch
+            $esDir = Get-ChildItem -Path "$ELK_BASE\elasticsearch" -Filter "elasticsearch-*" -Directory | Select-Object -First 1 -ExpandProperty FullName
+            if (-not $esDir) {
+                $esDir = "$ELK_BASE\elasticsearch\elasticsearch-8.11.0"
+            }
+            
+            Start-Process -FilePath "$esDir\bin\elasticsearch.bat" -WindowStyle Minimized
             Start-Sleep -Seconds 30
         } else {
             Write-ColorOutput "Elasticsearch already running" "Cyan"
@@ -89,13 +96,33 @@ function Start-ELKServices {
         
         # Start Logstash
         Write-ColorOutput "Starting Logstash..." "Yellow"
-        $logstashCmd = "$ELK_BASE\logstash\logstash\bin\logstash.bat -f $ELK_BASE\logstash\logstash\pipeline\nids-pipeline.conf"
+        
+        # Tìm đúng thư mục cài đặt Logstash
+        $lsDir = Get-ChildItem -Path "$ELK_BASE\logstash" -Filter "logstash-*" -Directory | Select-Object -First 1 -ExpandProperty FullName
+        if (-not $lsDir) {
+            $lsDir = "$ELK_BASE\logstash\logstash-8.11.0"
+        }
+        
+        # Tìm file pipeline configuration
+        $pipelineFile = Get-ChildItem -Path "$lsDir\config\pipelines.d" -Filter "nids-pipeline.conf" -File | Select-Object -First 1 -ExpandProperty FullName
+        if (-not $pipelineFile) {
+            $pipelineFile = "$lsDir\config\pipelines.d\nids-pipeline.conf"
+        }
+        
+        $logstashCmd = "$lsDir\bin\logstash.bat -f `"$pipelineFile`""
         Start-Process -FilePath "cmd.exe" -ArgumentList "/c", $logstashCmd -WindowStyle Minimized
         Start-Sleep -Seconds 15
         
         # Start Kibana
         Write-ColorOutput "Starting Kibana..." "Yellow"
-        Start-Process -FilePath "$ELK_BASE\kibana\kibana\bin\kibana.bat" -WindowStyle Minimized
+        
+        # Tìm đúng thư mục cài đặt Kibana
+        $kbDir = Get-ChildItem -Path "$ELK_BASE\kibana" -Filter "kibana-*" -Directory | Select-Object -First 1 -ExpandProperty FullName
+        if (-not $kbDir) {
+            $kbDir = "$ELK_BASE\kibana\kibana-8.11.0"
+        }
+        
+        Start-Process -FilePath "$kbDir\bin\kibana.bat" -WindowStyle Minimized
         Start-Sleep -Seconds 20
         
         Write-ColorOutput "All ELK services started!" "Green"
@@ -107,7 +134,6 @@ function Start-ELKServices {
         throw
     }
 }
-
 function Stop-ELKServices {
     Write-ColorOutput "=== Stopping ELK Services ===" "Yellow"
     
@@ -190,7 +216,7 @@ function Configure-Kibana {
         # Import sample dashboard configuration
         $dashboardConfig = @"
 {
-  "version": "8.12.0",
+  "version": "8.11.0",
   "objects": [
     {
       "id": "nids-overview",
