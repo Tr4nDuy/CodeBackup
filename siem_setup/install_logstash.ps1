@@ -1,70 +1,95 @@
-# Script cài đặt Logstash cho SIEM
-# Chạy với quyền Administrator
+﻿# Script cài đặt Logstash
+Write-Host "Đang cài đặt Logstash..." -ForegroundColor Green
 
-Write-Host "=== Cài đặt Logstash ===" -ForegroundColor Green
-
-# Tạo thư mục làm việc
-$workDir = "C:\ELK\logstash"
-if (!(Test-Path $workDir)) {
-    New-Item -ItemType Directory -Path $workDir -Force
-}
-Set-Location $workDir
+# Tạo thư mục ELK
+$elkDir = "C:\ELK"
+New-Item -ItemType Directory -Force -Path "$elkDir\logstash"
 
 # Download Logstash
-$logstashVersion = "8.12.0"
-$logstashUrl = "https://artifacts.elastic.co/downloads/logstash/logstash-$logstashVersion-windows-x86_64.zip"
-$logstashZip = "logstash-$logstashVersion-windows-x86_64.zip"
+$lsVersion = "8.11.0"
+$lsUrl = "https://artifacts.elastic.co/downloads/logstash/logstash-$lsVersion-windows-x86_64.zip"
+$lsZip = "$elkDir\logstash-$lsVersion.zip"
 
-Write-Host "Downloading Logstash..." -ForegroundColor Yellow
-try {
-    Invoke-WebRequest -Uri $logstashUrl -OutFile $logstashZip -UseBasicParsing
-    Write-Host "Download completed!" -ForegroundColor Green
-} catch {
-    Write-Host "Download failed: $($_.Exception.Message)" -ForegroundColor Red
-    exit 1
-}
+Write-Host "Downloading Logstash $lsVersion..." -ForegroundColor Yellow
+Invoke-WebRequest -Uri $lsUrl -OutFile $lsZip
 
 # Giải nén
 Write-Host "Extracting Logstash..." -ForegroundColor Yellow
-try {
-    Expand-Archive -Path $logstashZip -DestinationPath . -Force
-    $extractedDir = "logstash-$logstashVersion"
-    if (Test-Path $extractedDir) {
-        Rename-Item $extractedDir "logstash"
-    }
-    Remove-Item $logstashZip
-    Write-Host "Extraction completed!" -ForegroundColor Green
-} catch {
-    Write-Host "Extraction failed: $($_.Exception.Message)" -ForegroundColor Red
-    exit 1
-}
-
-# Cấu hình Logstash
-$configDir = "$workDir\logstash\config"
-$pipelineDir = "$workDir\logstash\pipeline"
+Expand-Archive -Path $lsZip -DestinationPath "$elkDir\logstash" -Force
 
 # Tạo thư mục pipeline
-if (!(Test-Path $pipelineDir)) {
-    New-Item -ItemType Directory -Path $pipelineDir -Force
+$pipelineDir = "$elkDir\logstash\logstash-$lsVersion\config\pipelines.d"
+New-Item -ItemType Directory -Force -Path $pipelineDir
+
+# Tạo thư mục configuration tùy chỉnh
+$configDir = "$elkDir\logstash\logstash-$lsVersion\config"
+
+# Cấu hình JVM cho bộ nhớ thấp
+$jvmOptionsFile = "$elkDir\logstash\logstash-$lsVersion\config\jvm.options"
+if (Test-Path $jvmOptionsFile) {
+    # Sao lưu file cấu hình
+    Copy-Item -Path $jvmOptionsFile -Destination "$jvmOptionsFile.bak"
+    
+    # Thay đổi cấu hình bộ nhớ
+    (Get-Content $jvmOptionsFile) -replace "-Xms1g", "-Xms256m" | Set-Content $jvmOptionsFile
+    (Get-Content $jvmOptionsFile) -replace "-Xmx1g", "-Xmx512m" | Set-Content $jvmOptionsFile
 }
 
-# Cấu hình JVM (giảm RAM usage)
-$jvmOptions = @"
--Xms512m
--Xmx1g
--XX:+UseG1GC
--XX:MaxGCPauseMillis=250
--XX:G1HeapRegionSize=16m
--XX:+ExplicitGCInvokesConcurrent
--XX:+UseLargePages
--XX:+UseTLAB
--XX:+ResizeTLAB
--XX:+UseCompressedOops
--XX:+UseCompressedClassPointers
+# Tạo cấu hình pipeline cho NIDS
+$pipelineContent = @"
+input {
+  udp {
+    port => 5514
+    type => "syslog"
+    codec => "json"
+  }
+}
+
+filter {
+  if [event_type] == "network_detection" {
+    date {
+      match => [ "timestamp", "yyyy-MM-dd HH:mm:ss.SSSSSS" ]
+      target => "@timestamp"
+    }
+    
+    mutate {
+      add_field => {
+        "[@metadata][index]" => "nids-logs-%{+YYYY.MM.dd}"
+      }
+    }
+    
+    # Risk level classification
+    if [risk_level] and [risk_level] > 7 {
+      mutate { add_tag => ["high_risk"] }
+    } else if [risk_level] and [risk_level] > 4 {
+      mutate { add_tag => ["medium_risk"] }
+    } else {
+      mutate { add_tag => ["low_risk"] }
+    }
+    
+    # Zone-based tagging
+    if [network_zone] {
+      mutate { add_tag => ["%{[network_zone]}"] }
+    }
+    
+    # Attack detection
+    if [is_attack] == true {
+      mutate { add_tag => ["attack_detected"] }
+    }
+  }
+}
+
+output {
+  stdout { codec => rubydebug }
+}
 "@
 
-$jvmOptions | Out-File -FilePath "$configDir\jvm.options" -Encoding UTF8
+# Lưu cấu hình pipeline
+$pipelineFile = "$pipelineDir\nids-pipeline.conf"
+Set-Content -Path $pipelineFile -Value $pipelineContent
 
-Write-Host "Logstash installation completed!" -ForegroundColor Green
-Write-Host "Location: $workDir\logstash" -ForegroundColor Cyan
-Write-Host "Next: Configure pipeline for NIDS integration" -ForegroundColor Yellow
+Write-Host "Logstash đã được cài đặt tại: $elkDir\logstash\logstash-$lsVersion" -ForegroundColor Green
+Write-Host "Pipeline được cấu hình tại: $pipelineFile" -ForegroundColor Green
+Write-Host "Để chạy Logstash, mở PowerShell với quyền Admin và chạy:" -ForegroundColor Cyan
+Write-Host "cd $elkDir\logstash\logstash-$lsVersion\bin" -ForegroundColor White
+Write-Host ".\logstash.bat -f $pipelineFile" -ForegroundColor White

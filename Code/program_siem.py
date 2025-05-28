@@ -7,12 +7,14 @@ import time
 import logging
 import argparse
 import json
+import socket
 from datetime import datetime
 from sklearn.metrics import matthews_corrcoef
 from sklearn.preprocessing import LabelEncoder
 from sklearn.metrics.pairwise import pairwise_kernels
 from tqdm import tqdm
 import warnings
+import sys
 
 warnings.filterwarnings("ignore", category=UserWarning, module="sklearn")
 
@@ -25,15 +27,21 @@ __SEED = 42
 __SCALER = "QuantileTransformer"
 
 class NIDSLogger:
-    """Enhanced logger for SIEM integration with JSON output"""
+    """Enhanced logger for SIEM integration with JSON output and network zones"""
     
-    def __init__(self, log_dir="logs"):
+    def __init__(self, log_dir="logs", siem_server="192.168.30.10", siem_port=5514):
         self.log_dir = log_dir
+        self.siem_server = siem_server
+        self.siem_port = siem_port
         os.makedirs(log_dir, exist_ok=True)
         
         # Setup JSON logger for SIEM
         self.json_logger = logging.getLogger('nids_json')
         self.json_logger.setLevel(logging.INFO)
+        
+        # Clear existing handlers to avoid duplicates
+        for handler in self.json_logger.handlers[:]:
+            self.json_logger.removeHandler(handler)
         
         # JSON log handler
         json_handler = logging.FileHandler(
@@ -46,6 +54,10 @@ class NIDSLogger:
         # Standard logger for debugging
         self.debug_logger = logging.getLogger('nids_debug')
         self.debug_logger.setLevel(logging.DEBUG)
+        
+        # Clear existing handlers
+        for handler in self.debug_logger.handlers[:]:
+            self.debug_logger.removeHandler(handler)
         
         debug_handler = logging.FileHandler(
             os.path.join(log_dir, 'nids_debug.log'),
@@ -66,18 +78,47 @@ class NIDSLogger:
             'udp_scans': 0,
             'icmp_sweeps': 0,
             'arp_scans': 0,
-            'start_time': datetime.now()
+            'start_time': datetime.now(),
+            'zones': {}
         }
     
-    def log_detection(self, features, prediction, confidence, processing_time=None):
-        """Log detection result in JSON format for SIEM"""
+    def send_to_siem(self, log_entry):
+        """Send log entry to SIEM server via syslog"""
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            sock.settimeout(2)  # 2 second timeout
+            
+            # Create syslog message
+            priority = 14  # facility=1 (user), severity=6 (info)
+            if log_entry.get('is_attack', False):
+                priority = 11  # facility=1, severity=3 (error)
+            
+            syslog_msg = f"<{priority}>{json.dumps(log_entry)}"
+            sock.sendto(syslog_msg.encode('utf-8'), (self.siem_server, self.siem_port))
+            sock.close()
+            return True
+        except Exception as e:
+            self.debug_logger.error(f"Failed to send to SIEM: {e}")
+            return False
+    
+    def log_detection(self, features, prediction, confidence, zone="unknown", interface="unknown", processing_time=None):
+        """Log detection result in JSON format for SIEM with network zone information"""
         
         # Update statistics
         self.stats['total_processed'] += 1
+        if zone not in self.stats['zones']:
+            self.stats['zones'][zone] = {
+                'total': 0, 'attacks': 0, 'normal': 0
+            }
+        
+        self.stats['zones'][zone]['total'] += 1
+        
         if prediction == '0_normal':
             self.stats['normal_detected'] += 1
+            self.stats['zones'][zone]['normal'] += 1
         else:
             self.stats['attacks_detected'] += 1
+            self.stats['zones'][zone]['attacks'] += 1
             if prediction == 'TCP':
                 self.stats['tcp_scans'] += 1
             elif prediction == 'UDP':
@@ -87,6 +128,9 @@ class NIDSLogger:
             elif prediction == 'ARP':
                 self.stats['arp_scans'] += 1
         
+        # Determine risk level based on zone and attack type
+        risk_level = self._calculate_risk_level(prediction, zone)
+        
         # Create structured log entry
         log_entry = {
             'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f'),
@@ -95,11 +139,15 @@ class NIDSLogger:
             'confidence': float(confidence) if confidence is not None else None,
             'is_attack': prediction != '0_normal',
             'severity': 'high' if prediction != '0_normal' else 'info',
+            'risk_level': risk_level,
+            'network_zone': zone,
+            'interface': interface,
             'processing_time_ms': processing_time,
-            'sensor_id': 'nids-001',
-            'version': '2.0'
-        }
-        
+            'sensor_id': f'nids-ubuntu-{interface}',
+            'sensor_location': f'Ubuntu Router - {zone} Zone',
+            'version': '2.1',
+            'host': 'ubuntu-router-192.168.111.133'
+        }        
         # Add network features if available
         try:
             if hasattr(features, 'columns'):
@@ -135,22 +183,22 @@ class NIDSLogger:
                 'TCP': {
                     'attack_type': 'TCP Port Scan',
                     'category': 'reconnaissance',
-                    'risk_level': 8
+                    'attack_risk_level': 8
                 },
                 'UDP': {
                     'attack_type': 'UDP Port Scan', 
                     'category': 'reconnaissance',
-                    'risk_level': 7
+                    'attack_risk_level': 7
                 },
                 'ICMP': {
                     'attack_type': 'ICMP Sweep',
                     'category': 'reconnaissance', 
-                    'risk_level': 6
+                    'attack_risk_level': 6
                 },
                 'ARP': {
                     'attack_type': 'ARP Scan',
                     'category': 'reconnaissance',
-                    'risk_level': 5
+                    'attack_risk_level': 5
                 }
             }
             
@@ -160,17 +208,40 @@ class NIDSLogger:
             log_entry.update({
                 'attack_type': 'normal_traffic',
                 'category': 'benign',
-                'risk_level': 1
+                'attack_risk_level': 1
             })
         
         # Log as JSON
         self.json_logger.info(json.dumps(log_entry))
         
+        # Send to SIEM if possible
+        self.send_to_siem(log_entry)
+        
         # Debug log
         self.debug_logger.info(
-            f"Detection: {prediction} (confidence: {confidence:.4f})" 
-            if confidence is not None else f"Detection: {prediction}"
+            f"Zone: {zone} | Detection: {prediction} (confidence: {confidence:.4f})" 
+            if confidence is not None else f"Zone: {zone} | Detection: {prediction}"
         )
+    
+    def _calculate_risk_level(self, prediction, zone):
+        """Calculate risk level based on attack type and network zone"""
+        base_risk = {
+            '0_normal': 1,
+            'TCP': 8,
+            'UDP': 7, 
+            'ICMP': 6,
+            'ARP': 5
+        }.get(prediction, 5)
+        
+        # Zone multipliers (higher risk in critical zones)
+        zone_multiplier = {
+            'WAN': 1.2,      # External facing - higher risk
+            'DMZ': 1.1,      # Partially trusted
+            'SERVER': 1.3,   # Critical systems
+            'LAN': 1.0       # Internal network
+        }.get(zone, 1.0)
+        
+        return min(10, int(base_risk * zone_multiplier))
     
     def log_stats(self):
         """Log current statistics"""
@@ -188,11 +259,15 @@ class NIDSLogger:
             'icmp_sweeps': self.stats['icmp_sweeps'],
             'arp_scans': self.stats['arp_scans'],
             'detection_rate': (self.stats['attacks_detected'] / max(1, self.stats['total_processed'])) * 100,
-            'sensor_id': 'nids-001'
+            'zones_stats': self.stats['zones'],
+            'sensor_id': 'nids-ubuntu-router',
+            'host': 'ubuntu-router-192.168.111.133'
         }
         
         self.json_logger.info(json.dumps(stats_entry))
         self.debug_logger.info(f"Statistics logged: {self.stats}")
+        
+        return stats_entry
 
 def K(X, Y=None, metric="poly", coef0=1, gamma=None, degree=3):
     """Compute kernel matrix between X and Y."""
@@ -248,84 +323,185 @@ class kINN:
             if self.logger:
                 self.logger.debug_logger.error(f"Error in fit: {e}")
             raise
-            
+
     def predict(self, X):
-        """Predict using k-INN with enhanced error handling"""
+        """Predict using k-INN with enhanced error handling and adapted model support"""
         start_time = time.time()
         
         try:
-            if not self.is_fitted:
-                raise ValueError("Model must be fitted before making predictions")
-                
+            # Check if model is fitted
+            if not hasattr(self, 'is_fitted') or not self.is_fitted:
+                if hasattr(self, 'is_fit') and self.is_fit:
+                    # Model was adapted from old format
+                    pass
+                else:
+                    raise ValueError("Model must be fitted before making predictions")
+            
+            # Prepare input data
             X = np.array(X)
             if len(X.shape) == 1:
                 X = X.reshape(1, -1)
-                
-            if X.shape[1] != self.X_train.shape[1]:
-                raise ValueError(f"Feature dimension mismatch: expected {self.X_train.shape[1]}, got {X.shape[1]}")
+            
+            # Determine training data attribute name (could be X or X_train)
+            train_data_attr = 'X_train' if hasattr(self, 'X_train') else 'X' 
+            train_data = getattr(self, train_data_attr)
+            
+            # Validate dimensions
+            if X.shape[1] != train_data.shape[1]:
+                raise ValueError(f"Feature dimension mismatch: expected {train_data.shape[1]}, got {X.shape[1]}")
+            
+            # Get k parameter (could be k or R)
+            k_param = getattr(self, 'k', getattr(self, 'R', 3))
             
             predictions = []
             confidences = []
-            
             for i, x in enumerate(X):
-                x = x.reshape(1, -1)
+                try:
+                    x = x.reshape(1, -1)
+                    
+                    # Calculate distances using kernel
+                    distances = kernel_distance_matrix(
+                        x, train_data, 
+                        kernel=self.kernel, 
+                        gamma=getattr(self, 'gamma', None)
+                    ).flatten()
+                    
+                    # Find k nearest neighbors
+                    k_indices = np.argsort(distances)[:k_param]
+                    
+                    # Get labels, which could be in y_train or derived from cluster_labels
+                    if hasattr(self, 'y_train'):
+                        k_labels = self.y_train[k_indices]
+                    elif hasattr(self, 'cluster_labels') and hasattr(self, 'cluster_map'):
+                        # Map from cluster labels to actual labels
+                        cluster_indices = [self.cluster_labels[idx] for idx in k_indices]
+                        k_labels = np.array([self.cluster_map[cl] for cl in cluster_indices])
+                    else:
+                        raise ValueError("No label information found in model")
+                    
+                    k_distances = distances[k_indices]
+                    
+                    # Calculate weights
+                    weight_type = getattr(self, 'weight', 'uniform')
+                    if weight_type == 'distance':
+                        weights = 1 / (k_distances + 1e-8)
+                    else:
+                        weights = np.ones(len(k_labels))
+                    
+                    # Weighted voting
+                    unique_labels, label_indices = np.unique(k_labels, return_inverse=True)
+                    label_weights = np.bincount(label_indices, weights=weights)
+                    
+                    predicted_label = unique_labels[np.argmax(label_weights)]
+                    confidence = np.max(label_weights) / np.sum(label_weights)
+                    
+                    # Log each prediction if logger available
+                    if hasattr(self, 'logger') and self.logger:
+                        processing_time = (time.time() - start_time) * 1000
+                        feature_df = pd.DataFrame([x.flatten()])
+                        self.logger.log_detection(
+                            feature_df, predicted_label, confidence, processing_time=processing_time
+                        )
                 
-                # Calculate distances using kernel
-                distances = kernel_distance_matrix(
-                    x, self.X_train, 
-                    kernel=self.kernel, 
-                    gamma=self.gamma
-                ).flatten()
+                except Exception as inner_e:
+                    # Handle error for individual sample
+                    if hasattr(self, 'logger') and self.logger:
+                        self.logger.debug_logger.error(f"Error predicting sample {i}: {inner_e}")
+                    
+                    # Get labels for default prediction
+                    if hasattr(self, 'y_train'):
+                        labels = self.y_train
+                    elif hasattr(self, 'cluster_map'):
+                        labels = np.array(self.cluster_map)
+                    else:
+                        labels = np.array([0])
+                    
+                    # Default to most common class with low confidence
+                    most_common_label = np.argmax(np.bincount(labels))
+                    predicted_label = most_common_label
+                    confidence = 0.5  # Medium confidence
                 
-                # Find k nearest neighbors
-                k_indices = np.argsort(distances)[:self.k]
-                k_labels = self.y_train[k_indices]
-                k_distances = distances[k_indices]
-                
-                # Calculate weights
-                if self.weight == 'distance':
-                    weights = 1 / (k_distances + 1e-8)
-                else:
-                    weights = np.ones(len(k_labels))
-                
-                # Weighted voting
-                unique_labels, label_indices = np.unique(k_labels, return_inverse=True)
-                label_weights = np.bincount(label_indices, weights=weights)
-                
-                predicted_label = unique_labels[np.argmax(label_weights)]
-                confidence = np.max(label_weights) / np.sum(label_weights)
-                
+                # Add prediction regardless of whether it was successful
                 predictions.append(predicted_label)
                 confidences.append(confidence)
-                
-                # Log each prediction if logger available
-                if self.logger:
-                    processing_time = (time.time() - start_time) * 1000
-                    # Note: We don't have access to original features here, 
-                    # so we'll create a simple DataFrame for logging
-                    feature_df = pd.DataFrame([x.flatten()])
-                    self.logger.log_detection(
-                        feature_df, predicted_label, confidence, processing_time
-                    )
             
             return np.array(predictions), np.array(confidences)
             
         except Exception as e:
-            if self.logger:
+            if hasattr(self, 'logger') and self.logger:
                 self.logger.debug_logger.error(f"Error in predict: {e}")
             raise
 
+def adapt_kINN_model(old_model, logger=None):
+    """Convert from old kINN model (program.py) to new kINN model (program_siem.py)"""
+    try:
+        # Create new model with parameters from old model
+        new_model = kINN(
+            k=getattr(old_model, 'R', 3),  # Default k=3 if R not found
+            kernel=getattr(old_model, 'kernel', 'poly'),  
+            gamma=None,  # Not in old model
+            coef0=1,     # Default
+            degree=3,    # Default
+            weight='uniform'
+        )
+        
+        # Transfer training data
+        if hasattr(old_model, 'X') and old_model.X is not None:
+            new_model.X_train = old_model.X
+            
+            # Try to get labels
+            if hasattr(old_model, 'cluster_labels') and hasattr(old_model, 'cluster_map'):
+                # Map cluster labels to actual labels using cluster_map
+                labels = []
+                for cl in old_model.cluster_labels:
+                    if cl < len(old_model.cluster_map):
+                        labels.append(old_model.cluster_map[cl])
+                    else:
+                        labels.append(0)  # Default label if mapping fails
+                new_model.y_train = np.array(labels)
+            else:
+                # Create dummy labels if not available
+                new_model.y_train = np.zeros(len(old_model.X))
+        
+        # Mark as fitted if old model was fitted
+        new_model.is_fitted = getattr(old_model, 'is_fit', False)
+        
+        # Attach logger
+        if logger:
+            new_model.logger = logger
+            logger.debug_logger.info("Successfully adapted old kINN model to new format")
+            
+        return new_model
+    except Exception as e:
+        if logger:
+            logger.debug_logger.error(f"Error adapting kINN model: {e}")
+        raise
+
 def load_models(model_dir):
-    """Load trained models with comprehensive error handling"""
+    """Load trained models with comprehensive error handling and model adaptation"""
     logger = NIDSLogger()
     
     try:
         # Load kINN model
         model_path = os.path.join(model_dir, 'kinn_model.pkl')
         with open(model_path, 'rb') as f:
-            model = pickle.load(f)
+            original_model = pickle.load(f)
+        
+        # Check model type and adapt if needed
+        if hasattr(original_model, 'is_fit') and not hasattr(original_model, 'is_fitted'):
+            logger.debug_logger.info(f"Detected old kINN model format, adapting...")
+            model = adapt_kINN_model(original_model, logger)
+        else:
+            model = original_model
+            
         model.logger = logger  # Attach logger
         logger.debug_logger.info(f"Loaded kINN model from {model_path}")
+        
+        # Check if model has required attributes
+        required_attrs = ['X_train', 'y_train', 'kernel', 'is_fitted']
+        missing_attrs = [attr for attr in required_attrs if not hasattr(model, attr)]
+        if missing_attrs:
+            logger.debug_logger.warning(f"Model missing required attributes: {missing_attrs}")
         
         # Load scaler
         scaler_path = os.path.join(model_dir, 'scaler.pkl')
@@ -346,7 +522,7 @@ def load_models(model_dir):
         raise
 
 def process_data_for_prediction(data_path, scaler, feature_columns=None):
-    """Process CSV data for prediction with enhanced error handling"""
+    """Process CSV data for prediction with enhanced error handling and feature validation"""
     try:
         # Load data
         df = pd.read_csv(data_path)
@@ -355,29 +531,72 @@ def process_data_for_prediction(data_path, scaler, feature_columns=None):
         if df.empty:
             raise ValueError("No data found in the CSV file")
         
-        # Use all columns except Label if feature_columns not specified
+        # Get scaler's feature names if available
+        scaler_features = None
+        if hasattr(scaler, 'feature_names_in_'):
+            scaler_features = scaler.feature_names_in_.tolist()
+            print(f"Scaler was trained on {len(scaler_features)} features")
+        
+        # Determine features to use
         if feature_columns is None:
-            feature_columns = [col for col in df.columns if col.lower() != 'label']
+            if scaler_features:
+                feature_columns = scaler_features
+                print("Using feature columns from scaler")
+            else:
+                feature_columns = [col for col in df.columns if col.lower() != 'label']
+                print("Using all non-label columns as features")
         
         # Check if required columns exist
         missing_cols = [col for col in feature_columns if col not in df.columns]
         if missing_cols:
-            raise ValueError(f"Missing columns: {missing_cols}")
+            print(f"WARNING: Missing columns in input data: {missing_cols}")
+            # Create missing columns with zeros
+            for col in missing_cols:
+                df[col] = 0
+                print(f"Added missing column '{col}' with zeros")
         
-        # Extract features
-        X = df[feature_columns].copy()
+        # Handle extra columns not needed
+        extra_cols = [col for col in df.columns if col not in feature_columns and col.lower() != 'label']
+        if extra_cols:
+            print(f"NOTE: {len(extra_cols)} extra columns not used by the model: {extra_cols[:5]}...")
+        
+        # Ensure columns are in the right order if scaler expects specific order
+        if scaler_features:
+            for col in scaler_features:
+                if col not in df.columns:
+                    df[col] = 0  # Add missing columns with zeros
+            
+            # Reorder columns to match scaler's expected order
+            X = df[scaler_features].copy()
+            print(f"Reordered columns to match scaler's expected format ({len(scaler_features)} features)")
+        else:
+            # Extract features in original order
+            X = df[feature_columns].copy()
         
         # Handle missing values
-        if X.isnull().sum().sum() > 0:
-            print("Warning: Found missing values, filling with median/mode")
+        missing_count = X.isnull().sum().sum()
+        if missing_count > 0:
+            print(f"WARNING: Found {missing_count} missing values, filling with median/mode")
             for col in X.columns:
                 if X[col].dtype in ['int64', 'float64']:
                     X[col].fillna(X[col].median(), inplace=True)
                 else:
                     X[col].fillna(X[col].mode()[0] if not X[col].mode().empty else 0, inplace=True)
         
+        # Check for infinity or very large values that might cause scaling issues
+        inf_count = np.isinf(X.select_dtypes(include=['float64', 'int64']).values).sum()
+        if inf_count > 0:
+            print(f"WARNING: Found {inf_count} infinite values, replacing with large finite values")
+            X = X.replace([np.inf, -np.inf], [1e30, -1e30])
+        
         # Scale features
-        X_scaled = scaler.transform(X)
+        try:
+            X_scaled = scaler.transform(X)
+            print(f"Successfully scaled {X.shape[1]} features for {X.shape[0]} samples")
+        except Exception as scale_error:
+            print(f"ERROR during scaling: {scale_error}")
+            print(f"Input shape: {X.shape}, Expected by scaler: {scaler.n_features_in_ if hasattr(scaler, 'n_features_in_') else 'Unknown'}")
+            raise
         
         return X_scaled, df
         
@@ -386,68 +605,115 @@ def process_data_for_prediction(data_path, scaler, feature_columns=None):
         raise
 
 def main():
-    """Enhanced main function with JSON logging"""
+    """Enhanced main function with JSON logging and network zone support"""
     parser = argparse.ArgumentParser(description='NIDS - Network Intrusion Detection System')
-    parser.add_argument('--data', required=True, help='Path to CSV data file')
+    parser.add_argument('data', help='Path to CSV data file')
     parser.add_argument('--models', default='../Saved model', help='Path to model directory')
     parser.add_argument('--output', default='predictions.csv', help='Output file for predictions')
+    parser.add_argument('--zone', default='unknown', help='Network zone (WAN/LAN/SERVER/DMZ)')
+    parser.add_argument('--interface', default='unknown', help='Network interface name')
+    parser.add_argument('--debug', action='store_true', help='Enable debug logging')
     
     args = parser.parse_args()
     
     try:
-        print("=== NIDS Real-time Detection System ===")
-        print(f"Loading models from: {args.models}")
+        if args.debug:
+            print("=== NIDS Real-time Detection System ===")
+            print(f"Zone: {args.zone} | Interface: {args.interface}")
+            print(f"Loading models from: {args.models}")
         
         # Load models
         model, scaler, label_encoder, logger = load_models(args.models)
         
-        print(f"Processing data from: {args.data}")
+        if args.debug:
+            print(f"Processing data from: {args.data}")
         
         # Process data
         X_scaled, original_df = process_data_for_prediction(args.data, scaler)
         
-        print("Making predictions...")
+        if len(X_scaled) == 0:
+            logger.debug_logger.warning("No data to process")
+            return
+        
+        if args.debug:
+            print("Making predictions...")
         start_time = time.time()
         
         # Make predictions
         predictions, confidences = model.predict(X_scaled)
         
-        processing_time = time.time() - start_time
-        print(f"Predictions completed in {processing_time:.2f} seconds")
+        processing_time = (time.time() - start_time) * 1000  # Convert to milliseconds
         
         # Decode predictions
         try:
             decoded_predictions = label_encoder.inverse_transform(predictions)
         except ValueError as e:
-            print(f"Warning: Could not decode all predictions: {e}")
+            logger.debug_logger.error(f"Could not decode predictions: {e}")
             decoded_predictions = predictions
         
-        # Create results DataFrame
+        # Log each detection with zone information
+        for i, (pred, conf) in enumerate(zip(decoded_predictions, confidences)):
+            # Get features for this row
+            features = original_df.iloc[i:i+1] if i < len(original_df) else None
+            
+            # Log detection
+            logger.log_detection(
+                features=features,
+                prediction=pred,
+                confidence=conf,
+                zone=args.zone,
+                interface=args.interface,
+                processing_time=processing_time / len(predictions)
+            )
+            
+            # Print alert for attacks (optional, for debugging)
+            if args.debug and pred != '0_normal':
+                print(f"ALERT: {pred} detected in {args.zone} zone (confidence: {conf:.4f})")
+        
+        # Create results DataFrame and save
         results_df = original_df.copy()
         results_df['Prediction'] = decoded_predictions
         results_df['Confidence'] = confidences
-        results_df['Processing_Time'] = processing_time / len(predictions)
+        results_df['Network_Zone'] = args.zone
+        results_df['Interface'] = args.interface
+        results_df['Processing_Time_MS'] = processing_time / len(predictions)
         
         # Save results
         results_df.to_csv(args.output, index=False)
-        print(f"Results saved to: {args.output}")
+        
+        # Log summary statistics
+        attack_count = sum(1 for pred in decoded_predictions if pred != '0_normal')
+        
+        if args.debug:
+            print(f"Processed {len(decoded_predictions)} packets")
+            print(f"Attacks detected: {attack_count}")
+            print(f"Processing time: {processing_time:.2f}ms total")
+          # Periodic stats logging (every 100 processed packets)
+        if logger.stats['total_processed'] % 100 == 0:
+            logger.log_stats()
         
         # Log final statistics
         logger.log_stats()
         
         # Print summary
         unique_predictions, counts = np.unique(decoded_predictions, return_counts=True)
-        print("\n=== Detection Summary ===")
-        for pred, count in zip(unique_predictions, counts):
-            percentage = (count / len(predictions)) * 100
-            print(f"{pred}: {count} ({percentage:.1f}%)")
+        if args.debug:
+            print("\n=== Detection Summary ===")
+            for pred, count in zip(unique_predictions, counts):
+                percentage = (count / len(predictions)) * 100
+                print(f"{pred}: {count} ({percentage:.1f}%)")
+            
+            print(f"\nJSON logs saved to: {logger.log_dir}")
+            print("System ready for SIEM integration!")
         
-        print(f"\nJSON logs saved to: {logger.log_dir}")
-        print("System ready for SIEM integration!")
-        
+    except FileNotFoundError:
+        print(f"Error: Data file {args.data} not found")
+        sys.exit(1)
     except Exception as e:
-        print(f"Error in main execution: {e}")
-        raise
+        print(f"Error: {e}")
+        if 'logger' in locals():
+            logger.debug_logger.error(f"Fatal error: {e}")
+        sys.exit(1)
 
 if __name__ == "__main__":
     main()

@@ -1,78 +1,40 @@
-# Script cài đặt Kibana cho SIEM
-# Chạy với quyền Administrator
+﻿# Script cài đặt Kibana
+Write-Host "Đang cài đặt Kibana..." -ForegroundColor Green
 
-Write-Host "=== Cài đặt Kibana ===" -ForegroundColor Green
-
-# Tạo thư mục làm việc
-$workDir = "C:\ELK\kibana"
-if (!(Test-Path $workDir)) {
-    New-Item -ItemType Directory -Path $workDir -Force
-}
-Set-Location $workDir
+# Tạo thư mục ELK
+$elkDir = "C:\ELK"
+New-Item -ItemType Directory -Force -Path "$elkDir\kibana"
 
 # Download Kibana
-$kibanaVersion = "8.12.0"
-$kibanaUrl = "https://artifacts.elastic.co/downloads/kibana/kibana-$kibanaVersion-windows-x86_64.zip"
-$kibanaZip = "kibana-$kibanaVersion-windows-x86_64.zip"
+$kbVersion = "8.11.0"
+$kbUrl = "https://artifacts.elastic.co/downloads/kibana/kibana-$kbVersion-windows-x86_64.zip"
+$kbZip = "$elkDir\kibana-$kbVersion.zip"
 
-Write-Host "Downloading Kibana..." -ForegroundColor Yellow
-try {
-    Invoke-WebRequest -Uri $kibanaUrl -OutFile $kibanaZip -UseBasicParsing
-    Write-Host "Download completed!" -ForegroundColor Green
-} catch {
-    Write-Host "Download failed: $($_.Exception.Message)" -ForegroundColor Red
-    exit 1
-}
+Write-Host "Downloading Kibana $kbVersion..." -ForegroundColor Yellow
+Invoke-WebRequest -Uri $kbUrl -OutFile $kbZip
 
 # Giải nén
 Write-Host "Extracting Kibana..." -ForegroundColor Yellow
-try {
-    Expand-Archive -Path $kibanaZip -DestinationPath . -Force
-    $extractedDir = "kibana-$kibanaVersion"
-    if (Test-Path $extractedDir) {
-        Rename-Item $extractedDir "kibana"
-    }
-    Remove-Item $kibanaZip
-    Write-Host "Extraction completed!" -ForegroundColor Green
-} catch {
-    Write-Host "Extraction failed: $($_.Exception.Message)" -ForegroundColor Red
-    exit 1
-}
+Expand-Archive -Path $kbZip -DestinationPath "$elkDir\kibana" -Force
 
 # Cấu hình Kibana
-$configFile = "$workDir\kibana\config\kibana.yml"
-$kibanaConfig = @"
-# Kibana Configuration for NIDS SIEM
+$kbConfigFile = "$elkDir\kibana\kibana-$kbVersion\config\kibana.yml"
+if (Test-Path $kbConfigFile) {
+    # Sao lưu file cấu hình
+    Copy-Item -Path $kbConfigFile -Destination "$kbConfigFile.bak"
+    
+    # Thêm cấu hình cho hệ thống NIDS
+    Add-Content -Path $kbConfigFile -Value "`n# NIDS Configuration"
+    Add-Content -Path $kbConfigFile -Value "server.host: localhost"
+    Add-Content -Path $kbConfigFile -Value "server.port: 5601"
+    Add-Content -Path $kbConfigFile -Value "elasticsearch.hosts: [""http://localhost:9200""]"
+    Add-Content -Path $kbConfigFile -Value "elasticsearch.serviceAccountToken: """
+    Add-Content -Path $kbConfigFile -Value "elasticsearch.ssl.verificationMode: none"
+    Add-Content -Path $kbConfigFile -Value "telemetry.enabled: false"
+    Add-Content -Path $kbConfigFile -Value "telemetry.allowChangingOptInStatus: false"
+}
 
-# Server configuration
-server.port: 5601
-server.host: "localhost"
-server.name: "nids-siem-kibana"
-
-# Elasticsearch connection
-elasticsearch.hosts: ["http://localhost:9200"]
-elasticsearch.requestTimeout: 90000
-elasticsearch.shardTimeout: 30000
-
-# Security (disable for development)
-elasticsearch.ssl.verificationMode: none
-xpack.security.enabled: false
-
-# Performance settings
-elasticsearch.pingTimeout: 1500
-elasticsearch.requestHeadersWhitelist: [ authorization ]
-
-# Logging
-logging.level: info
-logging.quiet: false
-
-# Dashboard settings
-kibana.index: ".kibana-nids"
-"@
-
-$kibanaConfig | Out-File -FilePath $configFile -Encoding UTF8
-
-Write-Host "Kibana installation completed!" -ForegroundColor Green
-Write-Host "Location: $workDir\kibana" -ForegroundColor Cyan
-Write-Host "Access URL: http://localhost:5601" -ForegroundColor Yellow
-Write-Host "Next: Start services and configure dashboards" -ForegroundColor Yellow
+Write-Host "Kibana đã được cài đặt tại: $elkDir\kibana\kibana-$kbVersion" -ForegroundColor Green
+Write-Host "Để chạy Kibana, mở PowerShell với quyền Admin và chạy:" -ForegroundColor Cyan
+Write-Host "cd $elkDir\kibana\kibana-$kbVersion\bin" -ForegroundColor White
+Write-Host ".\kibana.bat" -ForegroundColor White

@@ -1,0 +1,35 @@
+{
+  "index_patterns": ["nids-logs-*"],
+  "template": {
+    "settings": {
+      "number_of_shards": 1,
+      "number_of_replicas": 0,
+      "refresh_interval": "5s"
+    },
+    "mappings": {
+      "properties": {
+        "@timestamp": { "type": "date" },
+        "timestamp": { "type": "date" },
+        "source_ip": { "type": "ip" },
+        "destination_ip": { "type": "ip" },
+        "source_port": { "type": "integer" },
+        "destination_port": { "type": "integer" },
+        "protocol": { "type": "keyword" },
+        "prediction": { "type": "keyword" },
+        "confidence": { "type": "float" },
+        "alert_severity": { "type": "keyword" },
+        "risk_level": { "type": "integer" },
+        "attack_type": { "type": "keyword" },
+        "category": { "type": "keyword" },
+        "packet_count": { "type": "integer" },
+        "byte_count": { "type": "long" },
+        "flow_duration": { "type": "float" },
+        "session_type": { "type": "keyword" },
+        "network_zone": { "type": "keyword" },
+        "interface": { "type": "keyword" },
+        "zone_criticality": { "type": "keyword" }
+      }
+    }
+  },
+  "priority": 500
+}
