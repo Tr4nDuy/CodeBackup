@@ -94,6 +94,7 @@ class NIDSLogger:
                 priority = 11  # facility=1, severity=3 (error)
             
             syslog_msg = f"<{priority}>{json.dumps(log_entry)}"
+            print(f"Sending to SIEM: {syslog_msg}")
             sock.sendto(syslog_msg.encode('utf-8'), (self.siem_server, self.siem_port))
             sock.close()
             return True
@@ -310,12 +311,83 @@ class kINN:
         self.is_fitted = False
         self.logger = None
         
+        # Additional attributes for compatibility with original model
+        self.R = k  # Alias for compatibility
+        self.is_fit = False  # Alias for compatibility
+        self.X = None  # Training data (original name)
+        self.X_train = None  # Training data (new name)
+        self.y_train = None
+        self.cluster_labels = None
+        self.cluster_map = None
+        self.INNR = None
+        self.D_NN = None
+        self.mode = "Supervise"
+        
+    def load_model_compatible(self, model_path):
+        """Load a model saved by program.py with full compatibility"""
+        try:
+            with open(model_path, 'rb') as f:
+                loaded_data = pickle.load(f)
+            
+            # Check if model is saved as dictionary (new format) or direct object (old format)
+            if isinstance(loaded_data, dict) and 'model' in loaded_data:
+                # New format: model saved as dictionary with metadata
+                old_model = loaded_data['model']
+                
+                # Also save external data
+                self.external_cluster_train = loaded_data.get('cluster_train')
+                self.external_cluster_map = loaded_data.get('cluster_map') 
+                self.external_parameters = loaded_data.get('parameters', {})
+                
+                if self.logger:
+                    self.logger.debug_logger.info(f"Loaded model from dictionary format with parameters: {self.external_parameters}")
+                    
+            else:
+                # Old format: direct kINN object
+                old_model = loaded_data
+                self.external_cluster_train = None
+                self.external_cluster_map = None
+                self.external_parameters = {}
+            
+            # Copy all attributes from old model
+            for attr_name in dir(old_model):
+                if not attr_name.startswith('_') and hasattr(old_model, attr_name):
+                    attr_value = getattr(old_model, attr_name)
+                    setattr(self, attr_name, attr_value)
+            
+            # Ensure compatibility aliases
+            if hasattr(old_model, 'R'):
+                self.k = old_model.R
+                self.R = old_model.R
+            if hasattr(old_model, 'is_fit'):
+                self.is_fitted = old_model.is_fit
+                self.is_fit = old_model.is_fit
+            if hasattr(old_model, 'X'):
+                self.X_train = old_model.X
+                self.X = old_model.X
+                
+            if self.logger:
+                self.logger.debug_logger.info(f"Successfully loaded compatible model: R={self.R}, kernel={self.kernel}")
+                if hasattr(self, 'X') and self.X is not None:
+                    self.logger.debug_logger.info(f"Training data shape: {self.X.shape}")
+                if hasattr(self, 'cluster_labels') and self.cluster_labels is not None:
+                    self.logger.debug_logger.info(f"Cluster labels shape: {self.cluster_labels.shape}")
+                if hasattr(self, 'cluster_map') and self.cluster_map is not None:
+                    self.logger.debug_logger.info(f"Cluster map shape: {self.cluster_map.shape}")
+                    
+        except Exception as e:
+            if self.logger:
+                self.logger.debug_logger.error(f"Error loading compatible model: {e}")
+            raise
+        
     def fit(self, X, y):
         """Fit the k-INN model"""
         try:
             self.X_train = np.array(X)
             self.y_train = np.array(y)
+            self.X = self.X_train  # Compatibility alias
             self.is_fitted = True
+            self.is_fit = True  # Compatibility alias
             if self.logger:
                 self.logger.debug_logger.info(f"Model fitted with {len(X)} training samples")
             return self
@@ -323,114 +395,185 @@ class kINN:
             if self.logger:
                 self.logger.debug_logger.error(f"Error in fit: {e}")
             raise
-
+    
     def predict(self, X):
-        """Predict using k-INN with enhanced error handling and adapted model support"""
+        """Predict using k-INN with enhanced error handling and compatibility with original model"""
         start_time = time.time()
         
         try:
             # Check if model is fitted
-            if not hasattr(self, 'is_fitted') or not self.is_fitted:
-                if hasattr(self, 'is_fit') and self.is_fit:
-                    # Model was adapted from old format
-                    pass
-                else:
-                    raise ValueError("Model must be fitted before making predictions")
+            if not (hasattr(self, 'is_fitted') and self.is_fitted) and not (hasattr(self, 'is_fit') and self.is_fit):
+                raise ValueError("Model must be fitted before making predictions")
             
             # Prepare input data
             X = np.array(X)
             if len(X.shape) == 1:
                 X = X.reshape(1, -1)
             
-            # Determine training data attribute name (could be X or X_train)
-            train_data_attr = 'X_train' if hasattr(self, 'X_train') else 'X' 
-            train_data = getattr(self, train_data_attr)
+            # Check if this is a model loaded from program.py (has original structure)
+            if hasattr(self, 'cluster_labels') and hasattr(self, 'cluster_map') and hasattr(self, 'X'):
+                # Use original model's prediction method
+                return self._predict_original_model(X)
             
-            # Validate dimensions
-            if X.shape[1] != train_data.shape[1]:
-                raise ValueError(f"Feature dimension mismatch: expected {train_data.shape[1]}, got {X.shape[1]}")
-            
-            # Get k parameter (could be k or R)
-            k_param = getattr(self, 'k', getattr(self, 'R', 3))
-            
-            predictions = []
-            confidences = []
-            for i, x in enumerate(X):
-                try:
-                    x = x.reshape(1, -1)
-                    
-                    # Calculate distances using kernel
-                    distances = kernel_distance_matrix(
-                        x, train_data, 
-                        kernel=self.kernel, 
-                        gamma=getattr(self, 'gamma', None)
-                    ).flatten()
-                    
-                    # Find k nearest neighbors
-                    k_indices = np.argsort(distances)[:k_param]
-                    
-                    # Get labels, which could be in y_train or derived from cluster_labels
-                    if hasattr(self, 'y_train'):
-                        k_labels = self.y_train[k_indices]
-                    elif hasattr(self, 'cluster_labels') and hasattr(self, 'cluster_map'):
-                        # Map from cluster labels to actual labels
-                        cluster_indices = [self.cluster_labels[idx] for idx in k_indices]
-                        k_labels = np.array([self.cluster_map[cl] for cl in cluster_indices])
-                    else:
-                        raise ValueError("No label information found in model")
-                    
-                    k_distances = distances[k_indices]
-                    
-                    # Calculate weights
-                    weight_type = getattr(self, 'weight', 'uniform')
-                    if weight_type == 'distance':
-                        weights = 1 / (k_distances + 1e-8)
-                    else:
-                        weights = np.ones(len(k_labels))
-                    
-                    # Weighted voting
-                    unique_labels, label_indices = np.unique(k_labels, return_inverse=True)
-                    label_weights = np.bincount(label_indices, weights=weights)
-                    
-                    predicted_label = unique_labels[np.argmax(label_weights)]
-                    confidence = np.max(label_weights) / np.sum(label_weights)
-                    
-                    # Log each prediction if logger available
-                    if hasattr(self, 'logger') and self.logger:
-                        processing_time = (time.time() - start_time) * 1000
-                        feature_df = pd.DataFrame([x.flatten()])
-                        self.logger.log_detection(
-                            feature_df, predicted_label, confidence, processing_time=processing_time
-                        )
-                
-                except Exception as inner_e:
-                    # Handle error for individual sample
-                    if hasattr(self, 'logger') and self.logger:
-                        self.logger.debug_logger.error(f"Error predicting sample {i}: {inner_e}")
-                    
-                    # Get labels for default prediction
-                    if hasattr(self, 'y_train'):
-                        labels = self.y_train
-                    elif hasattr(self, 'cluster_map'):
-                        labels = np.array(self.cluster_map)
-                    else:
-                        labels = np.array([0])
-                    
-                    # Default to most common class with low confidence
-                    most_common_label = np.argmax(np.bincount(labels))
-                    predicted_label = most_common_label
-                    confidence = 0.5  # Medium confidence
-                
-                # Add prediction regardless of whether it was successful
-                predictions.append(predicted_label)
-                confidences.append(confidence)
-            
-            return np.array(predictions), np.array(confidences)
+            # Use new model's prediction method
+            return self._predict_new_model(X)
             
         except Exception as e:
             if hasattr(self, 'logger') and self.logger:
                 self.logger.debug_logger.error(f"Error in predict: {e}")
             raise
+    
+    def _predict_original_model(self, X_test):
+        """Predict using the original model structure from program.py"""
+        try:
+            # This mimics the predict method from program.py
+            N_test = X_test.shape[0]
+            self.M = N_test
+            
+            # Calculate distance matrix
+            dis_mat_X_test = kernel_distance_matrix(
+                matrix1=X_test, matrix2=self.X, kernel=self.kernel
+            )
+            self.distance_matrix_test = dis_mat_X_test
+            
+            D_NN_test = []
+            for i in range(N_test):
+                tmp = dis_mat_X_test[i,].argsort()
+                D_NN_test.append(tmp)
+                
+            D_NN_test = np.array(D_NN_test)
+            self.D_NN_test = D_NN_test
+            
+            INNR_X_test = []
+            for i in range(N_test):
+                NN = D_NN_test[i, 1:self.R+1]
+                tmp = []
+                for p in NN:
+                    # Check validity and D_NN existence
+                    if (hasattr(self, 'D_NN') and self.D_NN is not None and 
+                        p < len(self.D_NN) and self.D_NN[p] is not None):
+                        p_near_neighbor = self.D_NN[p]
+                        if i in p_near_neighbor:
+                            tmp.append(p)
+                pair = (i, tmp)
+                INNR_X_test.append(pair)
+                
+            self.INNR_test = INNR_X_test
+            
+            # Use original prediction logic
+            if hasattr(self, 'mode') and self.mode == "Supervise":
+                labels = self._predict_multi()
+                # Convert to format expected by new system
+                predictions = labels
+                confidences = np.ones(len(predictions)) * 0.8  # Default confidence
+                return predictions, confidences
+            else:
+                # Fallback to simple nearest neighbor
+                predictions = []
+                confidences = []
+                for i in range(N_test):
+                    nearest_idx = D_NN_test[i, 0]
+                    if hasattr(self, 'cluster_labels') and hasattr(self, 'cluster_map'):
+                        cluster_label = self.cluster_labels[nearest_idx]
+                        prediction = self.cluster_map[cluster_label]
+                    else:
+                        prediction = 0  # Default prediction
+                    predictions.append(prediction)
+                    confidences.append(0.7)  # Default confidence
+                return np.array(predictions), np.array(confidences)
+                
+        except Exception as e:
+            if hasattr(self, 'logger') and self.logger:
+                self.logger.debug_logger.error(f"Error in original model prediction: {e}")
+            raise
+    
+    def _predict_multi(self):
+        """Multi-class prediction method from original model"""
+        labels = -np.ones(self.M, dtype=int)
+        for pair in self.INNR_test:
+            idx = pair[0]
+            if pair[1]:  # Check if neighbor list is not empty
+                neighbors = pair[1]
+                labels[idx] = self.cluster_map[self.cluster_labels[neighbors[0]]]
+            else:                labels[idx] = self.cluster_map[
+                    self.cluster_labels[self.D_NN_test[idx][0]]
+                ]
+        return labels
+    
+    def _predict_new_model(self, X):
+        """Predict using new model structure"""
+        start_time = time.time()
+        
+        # Determine training data attribute name
+        train_data_attr = 'X_train' if hasattr(self, 'X_train') else 'X' 
+        train_data = getattr(self, train_data_attr)
+        
+        # Validate dimensions
+        if X.shape[1] != train_data.shape[1]:
+            raise ValueError(f"Feature dimension mismatch: expected {train_data.shape[1]}, got {X.shape[1]}")
+        
+        # Get k parameter
+        k_param = getattr(self, 'k', getattr(self, 'R', 3))
+        
+        predictions = []
+        confidences = []
+        for i, x in enumerate(X):
+            try:
+                x = x.reshape(1, -1)
+                
+                # Calculate distances using kernel
+                distances = kernel_distance_matrix(
+                    x, train_data, 
+                    kernel=self.kernel, 
+                    gamma=getattr(self, 'gamma', None)
+                ).flatten()
+                
+                # Find k nearest neighbors
+                k_indices = np.argsort(distances)[:k_param]
+                
+                # Get labels
+                if hasattr(self, 'y_train'):
+                    k_labels = self.y_train[k_indices]
+                else:
+                    # Default to class 0
+                    k_labels = np.zeros(k_param)
+                
+                k_distances = distances[k_indices]
+                
+                # Calculate weights
+                weight_type = getattr(self, 'weight', 'uniform')
+                if weight_type == 'distance':
+                    weights = 1 / (k_distances + 1e-8)
+                else:
+                    weights = np.ones(len(k_labels))
+                
+                # Weighted voting
+                unique_labels, label_indices = np.unique(k_labels, return_inverse=True)
+                label_weights = np.bincount(label_indices, weights=weights)
+                
+                predicted_label = unique_labels[np.argmax(label_weights)]
+                confidence = np.max(label_weights) / np.sum(label_weights)
+                
+                # Log each prediction if logger available
+                if hasattr(self, 'logger') and self.logger:
+                    processing_time = (time.time() - start_time) * 1000
+                    feature_df = pd.DataFrame([x.flatten()])
+                    self.logger.log_detection(
+                        feature_df, predicted_label, confidence, processing_time=processing_time
+                    )
+            
+            except Exception as inner_e:
+                # Handle error for individual sample
+                if hasattr(self, 'logger') and self.logger:
+                    self.logger.debug_logger.error(f"Error predicting sample {i}: {inner_e}")
+                  # Default prediction
+                predicted_label = 0
+                confidence = 0.5
+            
+            predictions.append(predicted_label)
+            confidences.append(confidence)
+        
+        return np.array(predictions), np.array(confidences)
 
 def adapt_kINN_model(old_model, logger=None):
     """Convert from old kINN model (program.py) to new kINN model (program_siem.py)"""
