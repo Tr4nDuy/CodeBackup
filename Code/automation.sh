@@ -97,7 +97,7 @@ while true; do
             log "Đã chuyển đổi thành công, phân tích với mô hình ML"
             
             # Chạy mô hình ML trên CSV
-            python3 program.py "$CSV_FILE"
+            python3 nids_analyzer.py "$CSV_FILE"
             ML_EXIT_CODE=$?
             
             if [ $ML_EXIT_CODE -eq 0 ]; then
@@ -137,8 +137,8 @@ while true; do
     log "Chu kỳ #$CYCLE_COUNT hoàn tất"
     log "------------------------------------"
     
-    # Sleep ngắn để đảm bảo lỗi không lặp lại quá nhanh
-    sleep 10
+    # Thêm độ trễ giữa các chu kỳ để giảm tải cho CPU
+    sleep 2
 done
 
 
