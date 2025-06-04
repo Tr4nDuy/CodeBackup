@@ -11,6 +11,16 @@ from sklearn.preprocessing import LabelEncoder
 from sklearn.metrics.pairwise import pairwise_kernels
 from tqdm import tqdm
 import warnings
+import socket
+from datetime import datetime
+
+# Import SIEM connector if available
+try:
+    from siem_connector import SIEMConnector
+    SIEM_AVAILABLE = True
+except ImportError:
+    SIEM_AVAILABLE = False
+    print("Warning: SIEM connector not found. SIEM integration disabled.")
 
 warnings.filterwarnings("ignore", category=UserWarning, module="sklearn")
 
@@ -21,6 +31,25 @@ pd.set_option("display.max_columns", None)
 __MODE = "Supervise"
 __SEED = 42
 __SCALER = "QuantileTransformer"
+
+# SIEM configuration
+SIEM_SERVER = "192.168.30.10"
+SIEM_PORT = 5514
+
+# Network zones configuration
+NETWORK_ZONES = {
+    "192.168.111.": "WAN",
+    "192.168.20.": "LAN",
+    "192.168.30.": "SERVER",
+    "192.168.40.": "DMZ"
+}
+
+def get_ip_zone(ip):
+    """Determine the network zone of an IP address"""
+    for prefix, zone in NETWORK_ZONES.items():
+        if ip.startswith(prefix):
+            return zone
+    return "Unknown"
 
 def K(X, Y=None, metric="poly", coef0=1, gamma=None, degree=3):
     """Compute kernel matrix between X and Y."""
@@ -673,6 +702,49 @@ def main():
             # In log ra console và ghi vào file
             print(f"{timestamp} - {log_message}")
             logging.info(log_message)
+
+            # Gửi sự kiện đến SIEM nếu có kết nối và không phải normal traffic
+            if SIEM_AVAILABLE and event != "Normal Traffic":
+                try:
+                    # Xác định zone dựa trên IP
+                    src_zone = get_ip_zone(src_ip)
+                    
+                    # Tính confidence score (độ tin cậy)
+                    confidence = 0.95 if event != "Unknown event" else 0.5
+                    
+                    # Xác định protocol từ label
+                    protocol = label if label in ["TCP", "UDP", "ICMP", "ARP"] else "Unknown"
+                    
+                    # Tạo kết nối đến SIEM
+                    siem = SIEMConnector(SIEM_SERVER, SIEM_PORT)
+                    
+                    # Tạo log data
+                    siem_log = siem.format_detection_log(
+                        src_ip=src_ip,
+                        dst_ip=dst_ip,
+                        src_port=int(src_port) if isinstance(src_port, (int, float)) else 0,
+                        dst_port=int(dst_port) if isinstance(dst_port, (int, float)) else 0,
+                        event_type=event,
+                        confidence=confidence,
+                        protocol=protocol,
+                        zone=src_zone,
+                        additional_data={
+                            "detection_time": timestamp,
+                            "original_label": label
+                        }
+                    )
+                    
+                    # Gửi log đến SIEM
+                    result = siem.send_log_tcp(siem_log)
+                    if result:
+                        print(f"  --> Đã gửi log đến SIEM: {siem_log.get('event_id')}")
+                    else:
+                        print(f"  --> Không gửi được log đến SIEM")
+                    
+                    # Đóng kết nối
+                    siem.close()
+                except Exception as e:
+                    print(f"Warning: Không thể gửi sự kiện đến SIEM: {str(e)}")
 
         # Hiển thị thống kê
         print(f"\n{'=' * 50}")

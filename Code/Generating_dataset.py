@@ -12,16 +12,42 @@ import pandas as pd
 if __name__ == "__main__":
 
     start = time.time()
-    print("========== CIC IoT feature extraction ==========")
+    print("\n========== CIC IoT feature extraction ==========")
 
+    # Handle command line arguments if provided
+    import sys
+    
     pcapfilesdir = "pcap_files"
-    pcapfiles = os.listdir(pcapfilesdir)
+    pcap_file_path = None
+    csv_output_path = None
+    
+    if len(sys.argv) > 1:
+        # Single file mode - process specific pcap file
+        pcap_file_path = sys.argv[1]
+        if len(sys.argv) > 2:
+            csv_output_path = sys.argv[2]
+        pcapfiles = [os.path.basename(pcap_file_path)]
+        pcapfilesdir = os.path.dirname(pcap_file_path)
+        if not pcapfilesdir:
+            pcapfilesdir = "."
+    else:
+        # Original directory scan mode
+        pcapfiles = os.listdir(pcapfilesdir)
+    
     subfiles_size = 10  # MB
     split_directory = "split_temp/"
     destination_directory = "output/"
     converted_csv_files_directory = "csv_files/"
     n_threads = 8
-
+    
+    # Ensure directories exist with proper permissions
+    os.makedirs(split_directory, exist_ok=True)
+    os.makedirs(destination_directory, exist_ok=True)
+    os.makedirs(converted_csv_files_directory, exist_ok=True)
+    
+    # Ensure the directories are writable
+    os.system(f"chmod 777 {split_directory} {destination_directory}")
+    
     address = "./"
 
     for i in range(len(pcapfiles)):
@@ -68,23 +94,34 @@ if __name__ == "__main__":
         print(">>>> 4. Merging (sub) .csv files (summary).")
 
         csv_subfiles = os.listdir(destination_directory)
-        mode = "w"
+        mode = "w"        
         for f in tqdm(csv_subfiles):
             try:
                 d = pd.read_csv(destination_directory + f)
+                output_csv_path = os.path.join(converted_csv_files_directory, pcap_file[:-5] + ".csv")
+                
+                # If a specific CSV output path was provided, use that instead
+                if csv_output_path and i == 0:  # Only for first pcap in case of multiple
+                    output_csv_path = csv_output_path
+                    
                 d.to_csv(
-                    os.path.join(converted_csv_files_directory, pcap_file[:-5] + ".csv"),
+                    output_csv_path,
                     header=mode == "w",
                     index=False,
                     mode=mode,
                 )
                 mode = "a"
-            except:
-                pass
+            except Exception as e:
+                print(f"Error processing CSV file: {e}")
+                errors += 1
 
         print(">>>> 5. Removing (sub) .csv files.")
         for cf in tqdm(csv_subfiles):
-            os.remove(destination_directory + cf)
+            try:
+                os.remove(destination_directory + cf)
+            except Exception as e:
+                print(f"Error removing file: {e}")
+                
         print(
             f"done! ({pcap_file})("
             + str(round(time.time() - lstart, 2))
@@ -93,4 +130,4 @@ if __name__ == "__main__":
         )
 
         end = time.time()
-        print(f"Elapsed Time = {(end-start)}s")
+        print(f"Elapsed Time = {(end-start)}s\n")
