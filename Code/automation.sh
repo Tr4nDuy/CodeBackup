@@ -137,8 +137,7 @@ while true; do
     log "Chu kỳ #$CYCLE_COUNT hoàn tất"
     log "------------------------------------"
     
-    # Thêm độ trễ giữa các chu kỳ để giảm tải cho CPU
-    sleep 2
+    exit 0
 done
 
 

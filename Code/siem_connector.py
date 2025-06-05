@@ -70,7 +70,7 @@ class SIEMConnector:
         
         log_data = {
             "event_id": event_id,
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.utcnow().isoformat() + "Z",
             "source_ip": src_ip,
             "destination_ip": dst_ip,
             "source_port": src_port,
