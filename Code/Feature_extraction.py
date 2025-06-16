@@ -454,5 +454,331 @@ class Feature_extraction():
         processed_df.to_csv(csv_file_name+".csv", index=False)
 
         return True
+    
+    def pcap_evaluation_realtime(self, packet_buffer, flow_info=None):
+        """
+        Evaluate a single packet in real-time and extract features
+        
+        Parameters:
+        - packet_buffer: Raw packet bytes (from scapy's bytes() conversion)
+        - flow_info: Dictionary to maintain flow state across packets (optional)
+        
+        Returns:
+        - List of extracted features
+        """
+        columns = [
+            "ts","flow_duration","flow_byte",
+            "src_mac", "dst_mac", "src_ip", "dst_ip", "src_port", "dst_port",
+            "Protocol Type", "Duration",
+            "Rate", "Srate", "Drate",
+            "fin_flag_number","syn_flag_number","rst_flag_number",
+            "psh_flag_number","ack_flag_number","urg_flag_number","ece_flag_number","cwr_flag_number",
+            "ack_count", "syn_count", "fin_count", "urg_count", "rst_count",
+            "max_duration","min_duration","sum_duration","average_duration","std_duration",
+            "CoAP", "HTTP", "HTTPS", "DNS", "Telnet","SMTP", "SSH", "IRC", "TCP", "UDP", "DHCP","ARP", "ICMP", "IGMP", "IPv", "LLC",
+            "Tot sum", "Min", "Max", "AVG", "Std","Tot size", "IAT", "Number", "MAC", "Magnitue", "Radius", "Covariance", "Variance", "Weight",
+            "DS status", "Fragments",
+            "Sequence number", "Protocol Version",
+            "flow_idle_time", "flow_active_time"
+        ]
+        
+        # Initialize flow tracking if not provided
+        if flow_info is None:
+            flow_info = {}
+        
+        # Get shared flow information or create new
+        tcpflows = flow_info.get('tcpflows', {})
+        udpflows = flow_info.get('udpflows', {})
+        ip_flow = flow_info.get('ip_flow', {})
+        ethsize = flow_info.get('ethsize', [])
+        tcp_flow_flags = flow_info.get('tcp_flow_flags', {})
+        incoming_pack = flow_info.get('incoming_pack', [])
+        outgoing_pack = flow_info.get('outgoing_pack', [])
+        
+        ts = time.time()
+        try:
+            eth = dpkt.ethernet.Ethernet(packet_buffer)
+        except Exception as e:
+            print(f"Error parsing packet: {e}")
+            return None
+            
+        # Initialize default values
+        src_port, src_ip, dst_port, dst_ip = 0, 0, 0, 0
+        duration, proto_type, protocol_name = 0, 0, ""
+        flow_duration, flow_byte = 0, 0
+        rate, srate, drate = 0, 0, 0
+        max_duration, min_duration, sum_duration, average_duration, std_duration = 0, 0, 0, 0, 0
+        total_du = 0
+        first_pac_time = flow_info.get('first_pac_time', 0)
+        last_pac_time = flow_info.get('last_pac_time', 0)
+        
+        # Get MAC address
+        src_mac = ':'.join('%02x' % b for b in eth.src)
+        dst_mac = ':'.join('%02x' % b for b in eth.dst)
+        
+        ethernet_frame_size = len(eth)
+        ethernet_frame_type = eth.type
+        total_du = total_du + ts
+        
+        # Initialize feature flags
+        flag_valus = [0] * 8  # numerical values of packet(TCP) flags
+        ack_count, syn_count, fin_count, urg_count, rst_count = 0, 0, 0, 0, 0
+        
+        # Layered flags
+        udp, tcp, http, https, arp, smtp, irc, ssh, dns, ipv, icmp, igmp, mqtt, coap = 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+        telnet, dhcp, llc, mac, rarp = 0, 0, 0, 0, 0
+        sum_packets, min_packets, max_packets, mean_packets, std_packets = 0, 0, 0, 0, 0
+        magnite, radius, correlation, covaraince, var_ratio, weight = 0, 0, 0, 0, 0, 0
+        idle_time, active_time = 0, 0
+        type_info, sub_type_info, ds_status, sequence, pack_id, fragments, wifi_dur = 0, 0, 0, 0, 0, 0, 0
+        
+        if eth.type == dpkt.ethernet.ETH_TYPE_IP or eth.type == dpkt.ethernet.ETH_TYPE_ARP:
+            if len(ethsize) % 20 == 0:
+                ethsize = []
+                ip_flow = {}
+                incoming_pack = []
+                outgoing_pack = []
+            
+            dy = Dynamic_features()
+            ethsize.append(ethernet_frame_size)
+            
+            sum_packets, min_packets, max_packets, mean_packets, std_packets = dy.dynamic_calculation(ethsize)
+            
+            last_pac_time = ts
+            IAT = last_pac_time - first_pac_time if first_pac_time > 0 else 0
+            first_pac_time = last_pac_time if first_pac_time == 0 else first_pac_time
+            
+            # Process IP packets
+            if eth.type == dpkt.ethernet.ETH_TYPE_IP:
+                ipv = 1
+                ip = eth.data
+                con_basic = Connectivity_features_basic(ip)
+                
+                # Connectivity_basic_features
+                try:
+                    src_ip = con_basic.get_source_ip()
+                    dst_ip = con_basic.get_destination_ip()
+                    src_port = con_basic.get_source_port()
+                    dst_port = con_basic.get_destination_port()
+                    proto_type = con_basic.get_protocol_type()
+                except:
+                    pass
+                
+                if dst_ip in ip_flow and ip_flow[dst_ip] == src_ip:
+                    outgoing_pack.append(ethernet_frame_size)
+                else:
+                    incoming_pack.append(ethernet_frame_size)
+                    ip_flow[src_ip] = dst_ip
+                
+                magnite, radius, correlation, covaraince, var_ratio, weight = dy.dynamic_two_streams(incoming_pack, outgoing_pack)
+                
+                # Connectivity_time_features
+                con_time = Connectivity_features_time(ip)
+                duration = con_time.duration()
+                potential_packet = ip.data
+                
+                # Connectivity_features_flags_bytes
+                conn_flags_bytes = Connectivity_features_flags_bytes(ip)
+                src_byte_count, dst_byte_count = conn_flags_bytes.count({}, {})
+                
+                # L_three_layered_features
+                l_three = L3(potential_packet)
+                udp = l_three.udp()
+                tcp = l_three.tcp()
+                
+                protocol_name = get_protocol_name(proto_type)
+                if protocol_name == "ICMP":
+                    icmp = 1
+                elif protocol_name == "IGMP":
+                    igmp = 1
+                
+                # L1_features
+                l_one = L1(potential_packet)
+                llc = l_one.LLC()
+                mac = l_one.MAC()
+                
+                l_four_both = L4(src_port, dst_port)
+                coap = l_four_both.coap()
+                smtp = l_four_both.smtp()
+                
+                # Features related to UDP
+                if type(potential_packet) == dpkt.udp.UDP:
+                    # L4 features
+                    l_four = L4(src_port, dst_port)
+                    l_two = L2(src_port, dst_port)
+                    dhcp = l_two.dhcp()
+                    dns = l_four.dns()
+                    
+                    flow = sorted([(src_ip, src_port), (dst_ip, dst_port)])
+                    flow = (flow[0], flow[1])
+                    flow_data = {
+                        'byte_count': len(eth),
+                        'ts': ts
+                    }
+                    
+                    if flow in udpflows:
+                        udpflows[flow].append(flow_data)
+                    else:
+                        udpflows[flow] = [flow_data]
+                    
+                    packets = udpflows[flow]
+                    number_of_packets_per_trabsaction = len(packets)
+                    flow_byte, flow_duration, max_duration, min_duration, sum_duration, average_duration, std_duration, idle_time, active_time = get_flow_info(udpflows, flow)
+                    src_to_dst_pkt, dst_to_src_pkt, src_to_dst_byte, dst_to_src_byte = get_src_dst_packets(udpflows, flow)
+                
+                # Features related to TCP
+                elif type(potential_packet) == dpkt.tcp.TCP:
+                    flag_valus = get_flag_values(ip.data)
+                    
+                    # L4 features based on TCP
+                    l_four = L4(src_port, dst_port)
+                    http = l_four.http()
+                    https = l_four.https()
+                    ssh = l_four.ssh()
+                    irc = l_four.IRC()
+                    smtp = l_four.smtp()
+                    mqtt = l_four.mqtt()
+                    telnet = l_four.telnet()
+                    
+                    try:
+                        http_info = dpkt.http.Response(ip.data)
+                        connection_status = http_info.status
+                    except:
+                        connection_status = 0
+                    
+                    flow = sorted([(src_ip, src_port), (dst_ip, dst_port)])
+                    flow = (flow[0], flow[1])
+                    flow_data = {
+                        'byte_count': len(eth),
+                        'ts': ts
+                    }
+                    
+                    if flow in tcpflows:
+                        tcpflows[flow].append(flow_data)
+                        # comparing Flow state based on its flags
+                        if flow in tcp_flow_flags:
+                            ack_count, syn_count, fin_count, urg_count, rst_count = tcp_flow_flags[flow]
+                            ack_count, syn_count, fin_count, urg_count, rst_count = compare_flow_flags(flag_valus, ack_count, syn_count, fin_count, urg_count, rst_count)
+                            tcp_flow_flags[flow] = [ack_count, syn_count, fin_count, urg_count, rst_count]
+                    else:
+                        tcpflows[flow] = [flow_data]
+                        ack_count, syn_count, fin_count, urg_count, rst_count = compare_flow_flags(flag_valus, ack_count, syn_count, fin_count, urg_count, rst_count)
+                        tcp_flow_flags[flow] = [ack_count, syn_count, fin_count, urg_count, rst_count]
+                    
+                    packets = tcpflows[flow]
+                    number_of_packets_per_trabsaction = len(packets)
+                    flow_byte, flow_duration, max_duration, min_duration, sum_duration, average_duration, std_duration, idle_time, active_time = get_flow_info(tcpflows, flow)
+                    src_to_dst_pkt, dst_to_src_pkt, src_to_dst_byte, dst_to_src_byte = get_src_dst_packets(tcpflows, flow)
+                
+                if flow_duration != 0:
+                    rate = number_of_packets_per_trabsaction / flow_duration
+                    srate = src_to_dst_pkt / flow_duration
+                    drate = dst_to_src_pkt / flow_duration
+            
+            # Process ARP packets
+            elif eth.type == dpkt.ethernet.ETH_TYPE_ARP:
+                arp = 1
+                # Use default values since ARP doesn't have IP/port
+            
+            # Process WiFi packets    
+            elif eth.type == dpkt.ieee80211:
+                try:
+                    wifi_info = Communication_wifi(eth.data)
+                    type_info, sub_type_info, ds_status, src_mac, dst_mac, sequence, pack_id, fragments, wifi_dur = wifi_info.calculating()
+                except:
+                    pass
+            
+            # Process RARP packets
+            elif eth.type == dpkt.ethernet.ETH_TYPE_REVARP:
+                rarp = 1
+            
+            # Features
+            new_row = [
+                ts,
+                flow_duration,
+                flow_byte,
+                src_mac,
+                dst_mac,
+                src_ip,
+                dst_ip,
+                src_port,
+                dst_port,
+                proto_type,
+                duration,
+                rate,
+                srate,
+                drate,
+                flag_valus[0],
+                flag_valus[1],
+                flag_valus[2],
+                flag_valus[3],
+                flag_valus[4],
+                flag_valus[5],
+                flag_valus[6],
+                flag_valus[7],
+                ack_count,
+                syn_count,
+                fin_count,
+                urg_count,
+                rst_count,
+                max_duration,
+                min_duration,
+                sum_duration,
+                average_duration,
+                std_duration,
+                coap,
+                http,
+                https,
+                dns,
+                telnet,
+                smtp,
+                ssh,
+                irc,
+                tcp,
+                udp,
+                dhcp,
+                arp,
+                icmp,
+                igmp,
+                ipv,
+                llc,
+                sum_packets,
+                min_packets,
+                max_packets,
+                mean_packets,
+                std_packets,
+                ethernet_frame_size,
+                IAT,
+                len(ethsize),
+                mac,
+                magnite,
+                radius,
+                covaraince,
+                var_ratio,
+                weight,
+                correlation,  # Added missing correlation feature
+                ds_status,
+                fragments,
+                sequence,
+                idle_time,
+                active_time,
+            ]
+            
+            # Update flow_info with current state
+            flow_info.update({
+                'tcpflows': tcpflows,
+                'udpflows': udpflows,
+                'ip_flow': ip_flow,
+                'ethsize': ethsize,
+                'tcp_flow_flags': tcp_flow_flags,
+                'incoming_pack': incoming_pack,
+                'outgoing_pack': outgoing_pack,
+                'first_pac_time': first_pac_time,
+                'last_pac_time': last_pac_time
+            })
+            
+            return new_row
+        
+        return None
 
 
