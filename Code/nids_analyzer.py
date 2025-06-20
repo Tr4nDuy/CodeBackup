@@ -717,11 +717,11 @@ def analyze_features(features, log_data):
             
             # Log the detection
             timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
-            log_message = f"Detection: Event='{event}', Src IP='{src_ip}', Src Port='{src_port}', Dst IP='{dst_ip}', Dst Port='{dst_port}', Label='{label}'"
+            log_message = f"Detection: Label='{label}'"
             logging.info(log_message)
             
             # Send to SIEM if it's not normal traffic
-            if SIEM_AVAILABLE and event != "Normal Traffic":
+            if SIEM_AVAILABLE:                  # and event != "Normal Traffic":
                 try:
                     # Get source zone
                     src_zone = get_ip_zone(src_ip)
@@ -730,7 +730,7 @@ def analyze_features(features, log_data):
                     confidence = 0.95 if event != "Unknown event" else 0.5
                     
                     # Determine protocol from label
-                    protocol = label if label in ["TCP", "UDP", "ICMP", "ARP"] else "Unknown"
+                    protocol = label if label in ["TCP", "UDP", "ICMP", "ARP", "0_normal"] else "Unknown"
                     
                     # Connect to SIEM
                     siem = SIEMConnector(SIEM_SERVER, SIEM_PORT)
