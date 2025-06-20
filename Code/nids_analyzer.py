@@ -544,7 +544,7 @@ def load_models():
     # Paths to model files
     model_path = os.path.join(os.path.dirname(__file__), "..", "Saved model", "kinn_model.pkl")
     scaler_path = os.path.join(os.path.dirname(__file__), "..", "Saved model", "scaler.pkl")
-    encoder_path = os.path.join(os.path.dirname(__file__), "..", "Saved model", "label_encoder.pkl")
+    encoder_path = os.path.join(os.path.dirname(__file__), "..", "Saved model", "encoder.pkl")
     
     # Check if files exist
     if not all(os.path.isfile(p) for p in [model_path, scaler_path, encoder_path]):
@@ -654,7 +654,7 @@ def extract_features_from_buffer():
     df = pd.DataFrame(feature_data, columns=columns)
 
     # Create DataFrame with only selected features for model
-    model_features = df[selected_columns].fillna(0)
+    model_features = df[selected_columns].fillna(0).infer_objects(copy=False)
     model_features.insert(0, "", range(1, len(df) + 1))
     
     # Store src_ip and dst_ip for logging
