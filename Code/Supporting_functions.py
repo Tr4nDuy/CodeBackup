@@ -7,9 +7,14 @@ def ip_to_str(ip):
     """
      converts and source or destination ip to string values
     """
-    ip = socket.inet_ntoa(ip)
-
-    return ip
+    try:
+        if isinstance(ip, int) and ip == 0:
+            return "0.0.0.0"
+        if ip is None:
+            return "0.0.0.0"
+        return socket.inet_ntoa(ip)
+    except Exception:
+        return "0.0.0.0"
 
 def get_protocol_name(protocol_val):
     """

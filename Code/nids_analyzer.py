@@ -34,6 +34,9 @@ from Supporting_functions import get_protocol_name, get_flow_info, get_flag_valu
     get_src_dst_packets, calculate_incoming_connections, \
     calculate_packets_counts_per_ips_proto, calculate_packets_count_per_ports_proto
 
+import warnings
+warnings.simplefilter(action='ignore', category=FutureWarning)
+
 # Define the kINN class to load the model properly
 def K(X, Y=None, metric="poly", coef0=1, gamma=None, degree=3):
     if metric == "poly":
@@ -470,12 +473,12 @@ class kINN:
         return y_pred_adv, mcc, threshold
 
 # Import SIEM connector if available
-try:
-    from siem_connector import SIEMConnector
-    SIEM_AVAILABLE = True
-except ImportError:
-    SIEM_AVAILABLE = False
-    print("Warning: SIEM connector not found. SIEM integration disabled.")
+# try:
+#     from siem_connector import SIEMConnector
+#     SIEM_AVAILABLE = True
+# except ImportError:
+SIEM_AVAILABLE = False
+#     print("Warning: SIEM connector not found. SIEM integration disabled.")
 
 # Set global configurations
 np.random.seed(42)
@@ -508,8 +511,12 @@ feature_extractor = None
 
 def get_ip_zone(ip):
     """Determine the network zone of an IP address"""
+    if ip is None or ip == 0 or str(ip) == "0" or str(ip) == "0.0.0.0":
+        return "Unknown"
+        
+    ip_str = str(ip)
     for prefix, zone in NETWORK_ZONES.items():
-        if str(ip).startswith(prefix):
+        if ip_str.startswith(prefix):
             return zone
     return "Unknown"
 
@@ -662,7 +669,7 @@ def extract_features_from_buffer():
         'src_ip': src_ips,
         'dst_ip': dst_ips
     }
-    
+    # print(df["Protocol Type"])
     return model_features, log_data
 
 def analyze_features(features, log_data):
@@ -737,8 +744,8 @@ def analyze_features(features, log_data):
                     
                     # Format log data
                     siem_log = siem.format_detection_log(
-                        src_ip=src_ip,
-                        dst_ip=dst_ip,
+                        src_ip=str(src_ip) if src_ip and src_ip != 0 else "0.0.0.0",
+                        dst_ip=str(dst_ip) if dst_ip and dst_ip != 0 else "0.0.0.0",
                         src_port=int(src_port) if isinstance(src_port, (int, float)) else 0,
                         dst_port=int(dst_port) if isinstance(dst_port, (int, float)) else 0,
                         event_type=event,
@@ -753,7 +760,7 @@ def analyze_features(features, log_data):
                     
                     # Send log to SIEM
                     result = siem.send_log_tcp(siem_log)
-                    logging.info(f"SIEM log sent: {result}")
+                    #logging.info(f"SIEM log sent: {result}")
                     siem.close()
                 except Exception as e:
                     logging.error(f"Error sending to SIEM: {str(e)}")
@@ -830,6 +837,7 @@ def main():
             "iface": args.interface,
             "prn": process_packet,
             "store": False
+            # "filter": "arp"  
         }
 
         if args.count > 0:

@@ -39,7 +39,7 @@ class SIEMConnector:
         try:
             self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             self.socket.connect((self.server_ip, self.logstash_port))
-            self.logger.info(f"Successfully connected to Logstash at {self.server_ip}:{self.logstash_port}")
+            #self.logger.info(f"Successfully connected to Logstash at {self.server_ip}:{self.logstash_port}")
             return True
         except Exception as e:
             self.logger.error(f"Failed to connect to Logstash: {str(e)}")
@@ -56,7 +56,7 @@ class SIEMConnector:
             # Convert log_data to JSON string with newline
             log_json = json.dumps(log_data) + "\n"
             self.socket.sendall(log_json.encode())
-            self.logger.info(f"Log sent to Logstash: {log_data.get('event_id', 'unknown')}")
+            #self.logger.info(f"Log sent to Logstash: {log_data.get('event_id', 'unknown')}")
             return True
         except Exception as e:
             self.logger.error(f"Failed to send log: {str(e)}")
@@ -66,17 +66,27 @@ class SIEMConnector:
     
     def format_detection_log(self, src_ip, dst_ip, src_port, dst_port, event_type, confidence, protocol, zone="unknown", additional_data=None):
         """Format detection data for SIEM consumption"""
-        event_id = f"NIDS-{int(time.time())}-{hash(src_ip + dst_ip) % 10000}"
+        # Ensure IP addresses are string format and handle 0 values correctly
+        src_ip_str = str(src_ip) if src_ip and src_ip != 0 and src_ip != '0' else "0.0.0.0"
+        dst_ip_str = str(dst_ip) if dst_ip and dst_ip != 0 and dst_ip != '0' else "0.0.0.0"
+        
+        # Validate IP format to make sure these are valid IP addresses for Elasticsearch
+        if src_ip_str.isdigit() or src_ip_str == '0':
+            src_ip_str = "0.0.0.0"
+        if dst_ip_str.isdigit() or dst_ip_str == '0':
+            dst_ip_str = "0.0.0.0"
+            
+        event_id = f"NIDS-{int(time.time())}-{hash(src_ip_str + dst_ip_str) % 10000}"
         
         log_data = {
             "event_id": event_id,
             "timestamp": datetime.utcnow().isoformat() + "Z",
-            "source_ip": src_ip,
-            "destination_ip": dst_ip,
-            "source_port": src_port,
-            "destination_port": dst_port,
+            "source_ip": src_ip_str,
+            "destination_ip": dst_ip_str,
+            "source_port": int(src_port) if isinstance(src_port, (int, float)) else 0,
+            "destination_port": int(dst_port) if isinstance(dst_port, (int, float)) else 0,
             "event_type": event_type,
-            "confidence": confidence,
+            "confidence": float(confidence),
             "protocol": protocol,
             "network_zone": zone,
             "detection_source": "NIDS-kINN"
@@ -93,7 +103,7 @@ class SIEMConnector:
         if self.socket:
             try:
                 self.socket.close()
-                self.logger.info("SIEM connection closed")
+                #self.logger.info("SIEM connection closed")
             except:
                 pass
             self.socket = None
