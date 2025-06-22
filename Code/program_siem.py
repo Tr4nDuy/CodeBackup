@@ -8,12 +8,14 @@ import logging
 import argparse
 import json
 import socket
+import socket
 from datetime import datetime
 from sklearn.metrics import matthews_corrcoef
 from sklearn.preprocessing import LabelEncoder
 from sklearn.metrics.pairwise import pairwise_kernels
 from tqdm import tqdm
 import warnings
+import sys
 import sys
 
 warnings.filterwarnings("ignore", category=UserWarning, module="sklearn")
@@ -28,9 +30,13 @@ __SCALER = "QuantileTransformer"
 
 class NIDSLogger:
     """Enhanced logger for SIEM integration with JSON output and network zones"""
+    """Enhanced logger for SIEM integration with JSON output and network zones"""
     
     def __init__(self, log_dir="logs", siem_server="192.168.30.10", siem_port=5514):
+    def __init__(self, log_dir="logs", siem_server="192.168.30.10", siem_port=5514):
         self.log_dir = log_dir
+        self.siem_server = siem_server
+        self.siem_port = siem_port
         self.siem_server = siem_server
         self.siem_port = siem_port
         os.makedirs(log_dir, exist_ok=True)
@@ -38,6 +44,10 @@ class NIDSLogger:
         # Setup JSON logger for SIEM
         self.json_logger = logging.getLogger('nids_json')
         self.json_logger.setLevel(logging.INFO)
+        
+        # Clear existing handlers to avoid duplicates
+        for handler in self.json_logger.handlers[:]:
+            self.json_logger.removeHandler(handler)
         
         # Clear existing handlers to avoid duplicates
         for handler in self.json_logger.handlers[:]:
@@ -54,6 +64,10 @@ class NIDSLogger:
         # Standard logger for debugging
         self.debug_logger = logging.getLogger('nids_debug')
         self.debug_logger.setLevel(logging.DEBUG)
+        
+        # Clear existing handlers
+        for handler in self.debug_logger.handlers[:]:
+            self.debug_logger.removeHandler(handler)
         
         # Clear existing handlers
         for handler in self.debug_logger.handlers[:]:
@@ -78,6 +92,8 @@ class NIDSLogger:
             'udp_scans': 0,
             'icmp_sweeps': 0,
             'arp_scans': 0,
+            'start_time': datetime.now(),
+            'zones': {}
             'start_time': datetime.now(),
             'zones': {}
         }
@@ -114,11 +130,20 @@ class NIDSLogger:
         
         self.stats['zones'][zone]['total'] += 1
         
+        if zone not in self.stats['zones']:
+            self.stats['zones'][zone] = {
+                'total': 0, 'attacks': 0, 'normal': 0
+            }
+        
+        self.stats['zones'][zone]['total'] += 1
+        
         if prediction == '0_normal':
             self.stats['normal_detected'] += 1
             self.stats['zones'][zone]['normal'] += 1
+            self.stats['zones'][zone]['normal'] += 1
         else:
             self.stats['attacks_detected'] += 1
+            self.stats['zones'][zone]['attacks'] += 1
             self.stats['zones'][zone]['attacks'] += 1
             if prediction == 'TCP':
                 self.stats['tcp_scans'] += 1
@@ -128,6 +153,9 @@ class NIDSLogger:
                 self.stats['icmp_sweeps'] += 1
             elif prediction == 'ARP':
                 self.stats['arp_scans'] += 1
+        
+        # Determine risk level based on zone and attack type
+        risk_level = self._calculate_risk_level(prediction, zone)
         
         # Determine risk level based on zone and attack type
         risk_level = self._calculate_risk_level(prediction, zone)
@@ -143,7 +171,15 @@ class NIDSLogger:
             'risk_level': risk_level,
             'network_zone': zone,
             'interface': interface,
+            'risk_level': risk_level,
+            'network_zone': zone,
+            'interface': interface,
             'processing_time_ms': processing_time,
+            'sensor_id': f'nids-ubuntu-{interface}',
+            'sensor_location': f'Ubuntu Router - {zone} Zone',
+            'version': '2.1',
+            'host': 'ubuntu-router-192.168.111.133'
+        }        
             'sensor_id': f'nids-ubuntu-{interface}',
             'sensor_location': f'Ubuntu Router - {zone} Zone',
             'version': '2.1',
@@ -185,20 +221,24 @@ class NIDSLogger:
                     'attack_type': 'TCP Port Scan',
                     'category': 'reconnaissance',
                     'attack_risk_level': 8
+                    'attack_risk_level': 8
                 },
                 'UDP': {
                     'attack_type': 'UDP Port Scan', 
                     'category': 'reconnaissance',
+                    'attack_risk_level': 7
                     'attack_risk_level': 7
                 },
                 'ICMP': {
                     'attack_type': 'ICMP Sweep',
                     'category': 'reconnaissance', 
                     'attack_risk_level': 6
+                    'attack_risk_level': 6
                 },
                 'ARP': {
                     'attack_type': 'ARP Scan',
                     'category': 'reconnaissance',
+                    'attack_risk_level': 5
                     'attack_risk_level': 5
                 }
             }
@@ -210,6 +250,7 @@ class NIDSLogger:
                 'attack_type': 'normal_traffic',
                 'category': 'benign',
                 'attack_risk_level': 1
+                'attack_risk_level': 1
             })
         
         # Log as JSON
@@ -218,11 +259,36 @@ class NIDSLogger:
         # Send to SIEM if possible
         self.send_to_siem(log_entry)
         
+        # Send to SIEM if possible
+        self.send_to_siem(log_entry)
+        
         # Debug log
         self.debug_logger.info(
             f"Zone: {zone} | Detection: {prediction} (confidence: {confidence:.4f})" 
             if confidence is not None else f"Zone: {zone} | Detection: {prediction}"
+            f"Zone: {zone} | Detection: {prediction} (confidence: {confidence:.4f})" 
+            if confidence is not None else f"Zone: {zone} | Detection: {prediction}"
         )
+    
+    def _calculate_risk_level(self, prediction, zone):
+        """Calculate risk level based on attack type and network zone"""
+        base_risk = {
+            '0_normal': 1,
+            'TCP': 8,
+            'UDP': 7, 
+            'ICMP': 6,
+            'ARP': 5
+        }.get(prediction, 5)
+        
+        # Zone multipliers (higher risk in critical zones)
+        zone_multiplier = {
+            'WAN': 1.2,      # External facing - higher risk
+            'DMZ': 1.1,      # Partially trusted
+            'SERVER': 1.3,   # Critical systems
+            'LAN': 1.0       # Internal network
+        }.get(zone, 1.0)
+        
+        return min(10, int(base_risk * zone_multiplier))
     
     def _calculate_risk_level(self, prediction, zone):
         """Calculate risk level based on attack type and network zone"""
@@ -263,10 +329,15 @@ class NIDSLogger:
             'zones_stats': self.stats['zones'],
             'sensor_id': 'nids-ubuntu-router',
             'host': 'ubuntu-router-192.168.111.133'
+            'zones_stats': self.stats['zones'],
+            'sensor_id': 'nids-ubuntu-router',
+            'host': 'ubuntu-router-192.168.111.133'
         }
         
         self.json_logger.info(json.dumps(stats_entry))
         self.debug_logger.info(f"Statistics logged: {self.stats}")
+        
+        return stats_entry
         
         return stats_entry
 
@@ -749,10 +820,15 @@ def process_data_for_prediction(data_path, scaler, feature_columns=None):
 
 def main():
     """Enhanced main function with JSON logging and network zone support"""
+    """Enhanced main function with JSON logging and network zone support"""
     parser = argparse.ArgumentParser(description='NIDS - Network Intrusion Detection System')
+    parser.add_argument('data', help='Path to CSV data file')
     parser.add_argument('data', help='Path to CSV data file')
     parser.add_argument('--models', default='../Saved model', help='Path to model directory')
     parser.add_argument('--output', default='predictions.csv', help='Output file for predictions')
+    parser.add_argument('--zone', default='unknown', help='Network zone (WAN/LAN/SERVER/DMZ)')
+    parser.add_argument('--interface', default='unknown', help='Network interface name')
+    parser.add_argument('--debug', action='store_true', help='Enable debug logging')
     parser.add_argument('--zone', default='unknown', help='Network zone (WAN/LAN/SERVER/DMZ)')
     parser.add_argument('--interface', default='unknown', help='Network interface name')
     parser.add_argument('--debug', action='store_true', help='Enable debug logging')
@@ -764,10 +840,16 @@ def main():
             print("=== NIDS Real-time Detection System ===")
             print(f"Zone: {args.zone} | Interface: {args.interface}")
             print(f"Loading models from: {args.models}")
+        if args.debug:
+            print("=== NIDS Real-time Detection System ===")
+            print(f"Zone: {args.zone} | Interface: {args.interface}")
+            print(f"Loading models from: {args.models}")
         
         # Load models
         model, scaler, label_encoder, logger = load_models(args.models)
         
+        if args.debug:
+            print(f"Processing data from: {args.data}")
         if args.debug:
             print(f"Processing data from: {args.data}")
         
@@ -780,11 +862,18 @@ def main():
         
         if args.debug:
             print("Making predictions...")
+        if len(X_scaled) == 0:
+            logger.debug_logger.warning("No data to process")
+            return
+        
+        if args.debug:
+            print("Making predictions...")
         start_time = time.time()
         
         # Make predictions
         predictions, confidences = model.predict(X_scaled)
         
+        processing_time = (time.time() - start_time) * 1000  # Convert to milliseconds
         processing_time = (time.time() - start_time) * 1000  # Convert to milliseconds
         
         # Decode predictions
@@ -792,8 +881,29 @@ def main():
             decoded_predictions = label_encoder.inverse_transform(predictions)
         except ValueError as e:
             logger.debug_logger.error(f"Could not decode predictions: {e}")
+            logger.debug_logger.error(f"Could not decode predictions: {e}")
             decoded_predictions = predictions
         
+        # Log each detection with zone information
+        for i, (pred, conf) in enumerate(zip(decoded_predictions, confidences)):
+            # Get features for this row
+            features = original_df.iloc[i:i+1] if i < len(original_df) else None
+            
+            # Log detection
+            logger.log_detection(
+                features=features,
+                prediction=pred,
+                confidence=conf,
+                zone=args.zone,
+                interface=args.interface,
+                processing_time=processing_time / len(predictions)
+            )
+            
+            # Print alert for attacks (optional, for debugging)
+            if args.debug and pred != '0_normal':
+                print(f"ALERT: {pred} detected in {args.zone} zone (confidence: {conf:.4f})")
+        
+        # Create results DataFrame and save
         # Log each detection with zone information
         for i, (pred, conf) in enumerate(zip(decoded_predictions, confidences)):
             # Get features for this row
@@ -820,9 +930,23 @@ def main():
         results_df['Network_Zone'] = args.zone
         results_df['Interface'] = args.interface
         results_df['Processing_Time_MS'] = processing_time / len(predictions)
+        results_df['Network_Zone'] = args.zone
+        results_df['Interface'] = args.interface
+        results_df['Processing_Time_MS'] = processing_time / len(predictions)
         
         # Save results
         results_df.to_csv(args.output, index=False)
+        
+        # Log summary statistics
+        attack_count = sum(1 for pred in decoded_predictions if pred != '0_normal')
+        
+        if args.debug:
+            print(f"Processed {len(decoded_predictions)} packets")
+            print(f"Attacks detected: {attack_count}")
+            print(f"Processing time: {processing_time:.2f}ms total")
+          # Periodic stats logging (every 100 processed packets)
+        if logger.stats['total_processed'] % 100 == 0:
+            logger.log_stats()
         
         # Log summary statistics
         attack_count = sum(1 for pred in decoded_predictions if pred != '0_normal')
@@ -848,11 +972,26 @@ def main():
             
             print(f"\nJSON logs saved to: {logger.log_dir}")
             print("System ready for SIEM integration!")
+        if args.debug:
+            print("\n=== Detection Summary ===")
+            for pred, count in zip(unique_predictions, counts):
+                percentage = (count / len(predictions)) * 100
+                print(f"{pred}: {count} ({percentage:.1f}%)")
+            
+            print(f"\nJSON logs saved to: {logger.log_dir}")
+            print("System ready for SIEM integration!")
         
     except FileNotFoundError:
         print(f"Error: Data file {args.data} not found")
         sys.exit(1)
+    except FileNotFoundError:
+        print(f"Error: Data file {args.data} not found")
+        sys.exit(1)
     except Exception as e:
+        print(f"Error: {e}")
+        if 'logger' in locals():
+            logger.debug_logger.error(f"Fatal error: {e}")
+        sys.exit(1)
         print(f"Error: {e}")
         if 'logger' in locals():
             logger.debug_logger.error(f"Fatal error: {e}")

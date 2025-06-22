@@ -1,6 +1,11 @@
 ﻿# Script cài đặt Logstash
 Write-Host "Đang cài đặt Logstash..." -ForegroundColor Green
+# Script cài đặt Logstash
+Write-Host "Đang cài đặt Logstash..." -ForegroundColor Green
 
+# Tạo thư mục ELK
+$elkDir = "C:\ELK"
+New-Item -ItemType Directory -Force -Path "$elkDir\logstash"
 # Tạo thư mục ELK
 $elkDir = "C:\ELK"
 New-Item -ItemType Directory -Force -Path "$elkDir\logstash"
@@ -9,12 +14,35 @@ New-Item -ItemType Directory -Force -Path "$elkDir\logstash"
 $lsVersion = "8.11.0"
 $lsUrl = "https://artifacts.elastic.co/downloads/logstash/logstash-$lsVersion-windows-x86_64.zip"
 $lsZip = "$elkDir\logstash-$lsVersion.zip"
+$lsVersion = "8.11.0"
+$lsUrl = "https://artifacts.elastic.co/downloads/logstash/logstash-$lsVersion-windows-x86_64.zip"
+$lsZip = "$elkDir\logstash-$lsVersion.zip"
 
+Write-Host "Downloading Logstash $lsVersion..." -ForegroundColor Yellow
+Invoke-WebRequest -Uri $lsUrl -OutFile $lsZip
 Write-Host "Downloading Logstash $lsVersion..." -ForegroundColor Yellow
 Invoke-WebRequest -Uri $lsUrl -OutFile $lsZip
 
 # Giải nén
 Write-Host "Extracting Logstash..." -ForegroundColor Yellow
+Expand-Archive -Path $lsZip -DestinationPath "$elkDir\logstash" -Force
+
+# Tạo thư mục pipeline
+$pipelineDir = "$elkDir\logstash\logstash-$lsVersion\config\pipelines.d"
+New-Item -ItemType Directory -Force -Path $pipelineDir
+
+# Tạo thư mục configuration tùy chỉnh
+$configDir = "$elkDir\logstash\logstash-$lsVersion\config"
+
+# Cấu hình JVM cho bộ nhớ thấp
+$jvmOptionsFile = "$elkDir\logstash\logstash-$lsVersion\config\jvm.options"
+if (Test-Path $jvmOptionsFile) {
+    # Sao lưu file cấu hình
+    Copy-Item -Path $jvmOptionsFile -Destination "$jvmOptionsFile.bak"
+    
+    # Thay đổi cấu hình bộ nhớ
+    (Get-Content $jvmOptionsFile) -replace "-Xms1g", "-Xms256m" | Set-Content $jvmOptionsFile
+    (Get-Content $jvmOptionsFile) -replace "-Xmx1g", "-Xmx512m" | Set-Content $jvmOptionsFile
 Expand-Archive -Path $lsZip -DestinationPath "$elkDir\logstash" -Force
 
 # Tạo thư mục pipeline
