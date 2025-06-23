@@ -501,7 +501,7 @@ packet_buffer = deque(maxlen=100)  # Buffer to store packets
 buffer_lock = threading.Lock()     # Lock for thread-safe buffer operations
 processing_event = threading.Event()  # Event to signal when buffer is ready for processing
 stop_capture = threading.Event()   # Event to signal when to stop capturing
-NUM_PROCESSING_THREADS = 3         # Number of processing threads
+NUM_PROCESSING_THREADS = 1         # Number of processing threads
 processing_threads = []            # List to track processing threads
 
 # Global variables for model and processing
@@ -678,6 +678,12 @@ def analyze_features(features, log_data):
     """Analyze extracted features using the machine learning model"""
     global kinn_model, scaler, encoder
     
+    ATTACK_THRESHOLD = 2  # Number of consecutive detections before sending to SIEM
+    if not hasattr(analyze_features, "attack_counters"):
+        # attack_counters: {src_ip: {"event": event, "count": count}}
+        analyze_features.attack_counters = {}
+    attack_counters = analyze_features.attack_counters
+    
     if features is None or features.empty:
         logging.warning("No features to analyze")
         return
@@ -728,44 +734,53 @@ def analyze_features(features, log_data):
             timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
             log_message = f"Detection: Label='{label}'"
             logging.info(log_message)
-            
-            # Send to SIEM if it's not normal traffic
-            if SIEM_AVAILABLE:                  # and event != "Normal Traffic":
-                try:
+
+            # --- Improved threshold logic ---
+            key = str(src_ip)
+            prev = attack_counters.get(key, {"event": None, "count": 0})
+            if prev["event"] == event:
+                attack_counters[key]["count"] += 1
+            else:
+                attack_counters[key] = {"event": event, "count": 1}
+            count = attack_counters[key]["count"]
+            # Gửi log nếu đủ threshold hoặc vượt threshold, không reset counter, chỉ reset khi đổi loại event
+            if count >= ATTACK_THRESHOLD:
+                if SIEM_AVAILABLE:
+                    try:
                     # Get source zone
-                    src_zone = get_ip_zone(src_ip)
+                        src_zone = get_ip_zone(src_ip)
                     
                     # Calculate confidence
-                    confidence = 0.95 if event != "Unknown event" else 0.5
+                        confidence = 0.95 if event != "Unknown event" else 0.5
                     
                     # Determine protocol from label
-                    protocol = label if label in ["TCP", "UDP", "ICMP", "ARP", "0_normal"] else "Unknown"
+                        protocol = label if label in ["TCP", "UDP", "ICMP", "ARP", "0_normal"] else "Unknown"
                     
                     # Connect to SIEM
-                    siem = SIEMConnector(SIEM_SERVER, SIEM_PORT)
+                        siem = SIEMConnector(SIEM_SERVER, SIEM_PORT)
                     
                     # Format log data
-                    siem_log = siem.format_detection_log(
-                        src_ip=str(src_ip) if src_ip and src_ip != 0 else "0.0.0.0",
-                        dst_ip=str(dst_ip) if dst_ip and dst_ip != 0 else "0.0.0.0",
-                        src_port=int(src_port) if isinstance(src_port, (int, float)) else 0,
-                        dst_port=int(dst_port) if isinstance(dst_port, (int, float)) else 0,
-                        event_type=event,
-                        confidence=confidence,
-                        protocol=protocol,
-                        zone=src_zone,
-                        additional_data={
-                            "detection_time": timestamp,
-                            "original_label": label
-                        }
-                    )
+                        siem_log = siem.format_detection_log(
+                            src_ip=str(src_ip) if src_ip and src_ip != 0 else "0.0.0.0",
+                            dst_ip=str(dst_ip) if dst_ip and dst_ip != 0 else "0.0.0.0",
+                            src_port=int(src_port) if isinstance(src_port, (int, float)) else 0,
+                            dst_port=int(dst_port) if isinstance(dst_port, (int, float)) else 0,
+                            event_type=event,
+                            confidence=confidence,
+                            protocol=protocol,
+                            zone=src_zone,
+                            additional_data={
+                                "detection_time": timestamp,
+                                "original_label": label
+                            }
+                        )
                     
                     # Send log to SIEM
-                    result = siem.send_log_tcp(siem_log)
-                    #logging.info(f"SIEM log sent: {result}")
-                    siem.close()
-                except Exception as e:
-                    logging.error(f"Error sending to SIEM: {str(e)}")
+                        result = siem.send_log_tcp(siem_log)
+                        logging.info(f"Log sent: {result}")
+                        siem.close()
+                    except Exception as e:
+                        logging.error(f"Error sending to SIEM: {str(e)}")
         
         # Print statistics
         logging.info("=" * 50)
