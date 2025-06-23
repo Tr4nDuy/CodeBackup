@@ -693,9 +693,9 @@ class Feature_extraction():
                 rarp = 1
 
             # DEBUG
-            protocol_name_str = get_protocol_name(proto_type)
+            # protocol_name_str = get_protocol_name(proto_type)
             # if protocol_name_str != "TCP" and protocol_name_str != "UDP":
-            print(f'{protocol_name_str}: {src_ip}:{src_port} -> {dst_ip}:{dst_port}, {src_mac}->{dst_mac}')
+            # print(f'{protocol_name_str}: {src_ip}:{src_port} -> {dst_ip}:{dst_port}, {src_mac}->{dst_mac}')
 
             # Features
             new_row = [

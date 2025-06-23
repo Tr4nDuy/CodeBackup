@@ -473,12 +473,12 @@ class kINN:
         return y_pred_adv, mcc, threshold
 
 # Import SIEM connector if available
-# try:
-#     from siem_connector import SIEMConnector
-#     SIEM_AVAILABLE = True
-# except ImportError:
-SIEM_AVAILABLE = False
-#     print("Warning: SIEM connector not found. SIEM integration disabled.")
+try:
+    from siem_connector import SIEMConnector
+    SIEM_AVAILABLE = True
+except ImportError:
+    SIEM_AVAILABLE = False
+    print("Warning: SIEM connector not found. SIEM integration disabled.")
 
 # Set global configurations
 np.random.seed(42)
@@ -724,8 +724,8 @@ def analyze_features(features, log_data):
             
             # Log the detection
             timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
-            log_message = f"Detection: Label='{label}'"
-            logging.info(log_message)
+            # log_message = f"Detection: Label='{label}'"
+            # logging.info(log_message)
             
             # Send to SIEM if it's not normal traffic
             if SIEM_AVAILABLE:                  # and event != "Normal Traffic":
