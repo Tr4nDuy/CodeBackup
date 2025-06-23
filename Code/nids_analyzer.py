@@ -473,12 +473,12 @@ class kINN:
         return y_pred_adv, mcc, threshold
 
 # Import SIEM connector if available
-# try:
-#     from siem_connector import SIEMConnector
-#     SIEM_AVAILABLE = True
-# except ImportError:
-SIEM_AVAILABLE = False
-#     print("Warning: SIEM connector not found. SIEM integration disabled.")
+try:
+    from siem_connector import SIEMConnector
+    SIEM_AVAILABLE = True
+except ImportError:
+    SIEM_AVAILABLE = False
+    print("Warning: SIEM connector not found. SIEM integration disabled.")
 
 # Set global configurations
 np.random.seed(42)
@@ -501,6 +501,8 @@ packet_buffer = deque(maxlen=100)  # Buffer to store packets
 buffer_lock = threading.Lock()     # Lock for thread-safe buffer operations
 processing_event = threading.Event()  # Event to signal when buffer is ready for processing
 stop_capture = threading.Event()   # Event to signal when to stop capturing
+NUM_PROCESSING_THREADS = 3         # Number of processing threads
+processing_threads = []            # List to track processing threads
 
 # Global variables for model and processing
 kinn_model = None
@@ -810,8 +812,7 @@ def main():
     parser.add_argument("-t", "--timeout", type=int, default=0, help="Timeout in seconds (0 for no timeout)")
     parser.add_argument("-v", "--verbose", action="store_true", help="Enable verbose logging")
     args = parser.parse_args()
-    
-    # Setup logging
+      # Setup logging
     logger = setup_logging()
     if args.verbose:
         for handler in logger.handlers:
@@ -826,11 +827,15 @@ def main():
             logger.error("Failed to load models. Exiting.")
             return 1
         
-        # Start processing thread
-        process_thread = threading.Thread(target=processing_thread_function)
-        process_thread.daemon = True
-        process_thread.start()
+        # Start multiple processing threads
+        global processing_threads
+        for i in range(NUM_PROCESSING_THREADS):
+            process_thread = threading.Thread(target=processing_thread_function, name=f"ProcessingThread-{i}")
+            process_thread.daemon = True
+            processing_threads.append(process_thread)
+            process_thread.start()
         
+        logger.info(f"Started {NUM_PROCESSING_THREADS} packet processing threads")
         logger.info("Starting packet capture...")
         
         sniff_kwargs = {
@@ -851,11 +856,13 @@ def main():
             logger.info("Keyboard interrupt received. Stopping capture.")
         except Exception as e:
             logger.error(f"Error during packet capture: {str(e)}")
-        
-        # Signal processing thread to stop and wait for any remaining packets
+          # Signal processing threads to stop and wait for any remaining packets
         stop_capture.set()
-        processing_event.set()  # Wake up the processing thread
-        process_thread.join(timeout=5)
+        processing_event.set()  # Wake up the processing threads
+        
+        # Wait for all processing threads to finish
+        for thread in processing_threads:
+            thread.join(timeout=5)
         
         logger.info("NIDS has been stopped")
         
