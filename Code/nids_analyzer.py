@@ -739,6 +739,16 @@ def analyze_features(features, log_data):
                     # Determine protocol from label
                     protocol = label if label in ["TCP", "UDP", "ICMP", "ARP", "0_normal"] else "Unknown"
                     
+                    # Collect useful features for ELK analysis
+                    feature_fields = [
+                        "flow_duration", "flow_byte", "src_port", "dst_port", "Duration", "Rate", "Srate", "Drate",
+                        "fin_flag_number", "syn_flag_number", "rst_flag_number", "psh_flag_number", "ack_flag_number",
+                        "urg_flag_number", "ece_flag_number", "cwr_flag_number", "ack_count", "syn_count", "fin_count",
+                        "urg_count", "rst_count", "max_duration", "min_duration", "sum_duration", "average_duration",
+                        "std_duration", "TCP", "UDP", "ICMP", "ARP"
+                    ]
+                    feature_values = {field: features.iloc[i][field] if field in features.columns else None for field in feature_fields}
+                    
                     # Connect to SIEM
                     siem = SIEMConnector(SIEM_SERVER, SIEM_PORT)
                     
@@ -754,7 +764,8 @@ def analyze_features(features, log_data):
                         zone=src_zone,
                         additional_data={
                             "detection_time": timestamp,
-                            "original_label": label
+                            "original_label": label,
+                            "features": feature_values
                         }
                     )
                     
