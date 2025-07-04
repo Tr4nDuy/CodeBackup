@@ -1,0 +1,28 @@
+1. Lý do (1 slide)
+; Nêu động lực, vấn đề thực tế, vì sao cần tạo dataset mới.
+
+2. Topology (1 slide)
+; Hình ảnh: Sơ đồ mạng, các vùng (LAN, SERVER, DMZ, WAN), vị trí attacker.
+
+3. Tạo dữ liệu
+Profile: (1 slide)
+        ; normal: traffic đa dạng, nhiều dịch vụ (DHCP, DNS, HTTP, HTTPS, SMTP, POP3,...)
+        ; attack: nmap với 14 kĩ thuật scan (TCP, UDP, ICMP, ARP)
+        
+Threat Model: (1 slide)
+; Đối tượng, mục tiêu, phạm vi, loại tấn công (insider/outsider, Nmap, các loại scan...).
+
+Kịch bản: (1 slide)
+; Mô tả các kịch bản tấn công: internal, external portscan
+
+4. Extract (1 slide)
+; Công cụ, số lượng đặc trưng, các nhóm đặc trưng
+
+5. Label (1 slide)
+; Cách gán nhãn: dựa trên đặc điểm lưu lượng, thời gian, script/thao tác thực tế, MAC/IP Address, Giao thức
+
+6. General Info (1 slide)
+; Thống kê tổng quan: số mẫu, dung lượng, số lớp, phân bố nhãn.
+
+7. Compare with other dataset (1 slide)
+; Bảng so sánh với CICIDS2017, CIDDS-001, Bot-IoT về kịch bản, nhãn, độ thực tế, v.v.
